@@ -248,6 +248,16 @@ tr.jnew { animation: pop .6s both; }
 .st.sim { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 @media (max-width: 720px) { .hgrid { grid-template-columns: 44px repeat(3, minmax(0, 1fr)); gap: 6px; } .hcell { padding: 8px; } .hcell .hv { font-size: 14px; } }
 
+
+/* ---------- loading shimmer placeholders (removed as soon as each section's data arrives) ---------- */
+.sk { border-radius: 12px; min-height: 16px; background: linear-gradient(100deg, var(--surface-2) 30%, var(--surface-3) 50%, var(--surface-2) 70%);
+  background-size: 200% 100%; animation: shimmer 1.3s linear infinite; border: 1px solid var(--border); }
+.sk.full { grid-column: 1 / -1; }
+.sk.line { height: 12px; border-radius: 6px; margin: 4px 0; border: 0; }
+td .sk.line { margin: 2px 0; }
+.sk-note { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
+
 /* ---------- toasts ---------- */
 .toasts { position: fixed; right: 16px; top: 70px; z-index: 50; display: grid; gap: 10px; width: min(360px, calc(100vw - 32px)); }
 .toast { background: var(--surface); border: 1px solid var(--border-2); border-left: 4px solid var(--accent); border-radius: 12px;
@@ -357,9 +367,9 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
         <span class="live-tag"><span class="dot ok"></span>last candle updates live</span>
       </div>
       <div id="ohlc" class="mono"></div>
-      <div class="chart-box" id="chartBox"><div class="skeleton"></div><div id="chart"></div></div>
+      <div class="chart-box loading" id="chartBox"><div class="skeleton"></div><div id="chart"></div></div>
       <div class="sub" style="margin-top:8px">RSI (14) · trigger levels <span id="rsiLv">40 / 60</span></div>
-      <div class="chart-box"><div id="rsi"></div></div>
+      <div class="chart-box loading" id="rsiBox"><div class="skeleton"></div><div id="rsi"></div></div>
     </div>
 
     <div style="display:grid; gap:16px">
@@ -600,7 +610,7 @@ async function loadChart(showSkeleton) {
     if (showSkeleton) chart.timeScale().fitContent();
     $("ohlc").textContent = S.chartInfo;
   } catch (e) { $("ohlc").textContent = "Chart error: " + e.message; }
-  finally { $("chartBox").classList.remove("loading"); }
+  finally { $("chartBox").classList.remove("loading"); $("rsiBox").classList.remove("loading"); }
 }
 function updateChartHead() {
   const t = S.live && S.live.tickers[S.sym];
@@ -882,6 +892,11 @@ const yearOf = t => new Date((t + IST) * 1000).getUTCFullYear();
 function renderHistory() {
   const d = S.h, ov = S.ov; if (!d || !ov) return;
   const ready = d.state === "ready";
+  if (!d.books.length && !ready) {                         // nothing calculated yet: keep the shimmer, update progress only
+    $("hProg").firstElementChild.style.width = (d.total ? d.done / d.total * 100 : 0) + "%";
+    $("hHint").textContent = `calculating ${d.done}/${d.total} (downloads ~2.5 years of candles, about 20 s)…`;
+    return;
+  }
   $("hProg").style.display = ready ? "none" : "";
   $("hProg").firstElementChild.style.width = (d.total ? d.done / d.total * 100 : 0) + "%";
   $("hHint").textContent = ready ? `simulated · start $${fmt(d.capital, 0)} per coin/timeframe · ${(d.risk * 100).toFixed(1)}% risk · fees ${(d.fee * 100).toFixed(2)}%/side + slippage · click a card to filter, a row to see it on the chart`
@@ -1078,6 +1093,7 @@ async function pullOverview() {
       S.lastSig[key] = sig;
     }
     S.ov = d;
+    unskel("tickers", "banners", "ticket", "steps", "matrix", "books", "jTbl", "kpis", "tbl");
     const live = d.mode === "LIVE";
     $("modePill").className = "pill" + (live ? " live" : "") + (DEMO ? " demo-pill" : ""); $("modePill").textContent = (DEMO ? "DEMO · " : "") + (live ? "● LIVE TRADING" : "PAPER MODE");
     $("subline").textContent = `${d.strategy} strategy · trades ${d.resolution} · ${d.symbols.join(", ")} · ${d.env}`;
@@ -1114,6 +1130,26 @@ function tick() {
   const c = cardOf(S.sym, S.tf);                              // candle just closed: refresh signals (throttled)
   if (c && Date.now() / 1000 > c.next_close + 5 && Date.now() - (S.lastOvPull || 0) > 5000) { S.lastOvPull = Date.now(); pullOverview(); }
 }
+
+
+/* ---------- shimmer placeholders until data arrives ---------- */
+function skel(id, n, h, opts = {}) {
+  const el = $(id); if (!el) return;
+  if (el.tagName === "TABLE") {
+    el.innerHTML = `<tbody>` + Array.from({ length: n }, (_, i) => `<tr data-sk><td><div class="sk line" style="width:${60 + (i * 37) % 40}%"></div></td></tr>`).join("") + `</tbody>`;
+    return;
+  }
+  if (el.tagName === "UL") {
+    el.innerHTML = Array.from({ length: n }, () => `<li data-sk style="list-style:none;display:block;width:100%"><div class="sk" style="height:${h}px;margin:6px 0;width:100%"></div></li>`).join("");
+    return;
+  }
+  el.innerHTML = Array.from({ length: n }, () => `<div class="sk ${opts.full ? "full" : ""}" data-sk style="height:${h}px"></div>`).join("") +
+    (opts.note ? `<div class="sk-note" data-sk>${opts.note}</div>` : "");
+}
+function unskel(...ids) { ids.forEach(id => { const el = $(id); if (el) el.querySelectorAll("[data-sk]").forEach(x => x.remove()); }); }
+skel("tickers", 3, 96); skel("banners", 3, 170, { note: "Loading live signals from Delta…" }); skel("ticket", 1, 210);
+skel("steps", 3, 44); skel("matrix", 3, 120, { full: true }); skel("books", 3, 190); skel("jTbl", 4);
+skel("kpis", 7, 74); skel("tbl", 3); skel("hGrid", 3, 110, { full: true, note: "Replaying ~2.5 years of candles for every coin and timeframe (about 20 s)…" }); skel("hTbl", 8);
 
 initCharts();
 pullOverview().then(() => { pullLive(); pullHistory(); });

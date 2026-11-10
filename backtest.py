@@ -83,12 +83,12 @@ def run_backtest(df: pd.DataFrame, cfg, capital: float = 1000.0, contract_value:
                    after_30pct_tax_return=float(after_tax / capital), buy_hold=bh)
 
 
-def simulate_trades(d: pd.DataFrame, cfg, capital: float = 500.0, now: float = None):
+def simulate_trades(d: pd.DataFrame, cfg, capital: float = 500.0, now: float = None, sig=None):
     """Fast version of run_backtest() for the dashboard: same rules, same order of checks (tests/test_core.py proves
     the trades match), but uses signals_vectorized() and plain arrays so 2.5 years of 30m candles take milliseconds.
     `d` must already have indicators. Returns a list of trade dicts, including SL/TP, plus a still-open last trade.
     Only candles that are CLOSED at `now` can create a signal (the forming candle is ignored, like the live bot)."""
-    sig = signals_vectorized(d, cfg)
+    sig = signals_vectorized(d, cfg) if sig is None else np.asarray(sig, dtype=int).copy()   # custom rules (research)
     if now is not None:
         sig[(d["time"].to_numpy() + cfg.period_seconds) > now] = 0
     t, o, h, l, atr = (d[k].to_numpy(dtype=float) for k in ("time", "open", "high", "low", "atr"))
