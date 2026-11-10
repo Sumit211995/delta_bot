@@ -1,128 +1,194 @@
 # Delta Exchange India Trading Bot
 
-A personal trading bot for **Delta Exchange India** (BTCUSD / ETHUSD perpetuals). It trades with an
-EMA trend-following strategy. Every entry is a **bracket order**: the stop loss and take profit sit on
-the exchange, so they still work if the bot crashes. It also has hard risk limits and a backtester that
-runs the same strategy code as the live loop.
+A personal trading bot for **Delta Exchange India** perpetual futures (BTCUSD, ETHUSD). Every trade is sent as a
+**bracket order**, with the **stop loss and target stored on the exchange**. If your computer or the bot crashes,
+the stop loss still works.
 
-> **Reality check.** No bot guarantees profit. Leveraged derivatives can lose money fast. Only trade money
-> you can afford to lose completely. This is not financial advice. You are responsible for every order the bot places.
+> **Reality check.** This is not a money machine. The backtest shows a **small** edge, and it wins only about **30% of
+> trades**. It makes money because winners are 3× the size of losers. Runs of 8–10 losses in a row are normal.
+> Only trade money you can afford to lose. Not financial advice: you are responsible for every order it places.
 
 ---
 
-## Current backtest results (checked 2026-11-10, default settings)
+## How the bot works (in plain words)
 
-| Market | Timeframe | Trades (2 yrs) | Win rate | Profit factor | Return | Max drawdown |
+```
+every 20 s ──► has a new 4-hour candle CLOSED?  ──no──► wait
+                         │ yes
+                         ▼
+        trend filter: EMA50 > EMA200 and price > EMA200 ?  (uptrend → only BUY)
+                      EMA50 < EMA200 and price < EMA200 ?  (downtrend → only SELL)
+                         │
+                         ▼
+        pullback trigger: in an uptrend, RSI dipped below 40 and just closed back above 40 → BUY
+                          in a downtrend, RSI rose above 60 and just closed back below 60 → SELL
+                         │
+                         ▼
+        risk checks: not halted, daily loss limit OK, trade cap OK, no open position on this coin
+                         │
+                         ▼
+        STOP LOSS = entry ∓ 1.5 × ATR        TARGET = 3 × stop distance  (risk:reward 1:3)
+        SIZE      = contracts so that hitting the stop loses 0.5% of capital
+                         │
+                         ▼
+        ONE market order with SL + TP attached (bracket) ─► bot confirms SL/TP exist, else closes & halts
+                         │
+                         ▼
+        Delta closes the trade by itself when SL or TP is hit → Telegram message
+```
+
+The idea: trade **with** the trend and enter **after a dip**, not at random. ATR measures how much the coin normally moves,
+so the stop loss sits outside normal noise. It is wider when the market is volatile and tighter when it is calm.
+
+### Safety layer
+| Protection | Default | What happens |
+|---|---|---|
+| Risk per trade | 0.5% of `BOT_CAPITAL_USD` | Size is calculated from the stop distance |
+| Daily loss limit | −3% | No new trades until the next UTC day |
+| Max drawdown | −10% from peak | Bot **halts permanently** until you reset it by hand |
+| Max trades/day | 3 | |
+| One position per coin | | New signals are ignored while a position is open |
+| Protection check | | If SL/TP can't be confirmed after entry, the bot closes the position and halts |
+| No duplicate orders | | Each candle is marked "processed" before ordering, and orders are never auto-retried |
+
+---
+
+## Backtest results (checked 2026-11-10, Dec 2023 – Nov 2026, fees + GST + slippage included)
+
+The strategy was chosen on the **first 60%** of the data and then checked on the **last 40%**, which it had never seen.
+193 combinations were tried, and the one with the best tuning-data result was also profitable on unseen data for both coins.
+
+| Coin | Strategy | Trades | Win rate | Profit factor | Return (1% risk) | Max drawdown |
 |---|---|---|---|---|---|---|
-| BTCUSD | 1h (default) | 175 | 34.3% | 0.86 | **−8.3%** | 14.1% |
-| ETHUSD | 1h | 198 | 31.3% | 0.80 | **−14.0%** | 17.1% |
-| BTCUSD | 4h | 37 | 37.8% | 1.10 | +1.2% | 4.3% |
-| ETHUSD | 4h | 38 | 26.3% | 0.67 | −4.7% | 6.9% |
+| BTCUSD | **pullback 4h (new default)** | 99 | 30% | 1.17 | **+14.0%** | 9.2% |
+| ETHUSD | **pullback 4h (new default)** | 88 | 31% | 1.23 | **+15.8%** | 11.0% |
+| BTCUSD | ema_cross 1h (old) | 228 | 32% | 0.72 | −35.9% | 42.4% |
+| ETHUSD | ema_cross 1h (old) | 250 | 28% | 0.66 | −47.1% | 47.1% |
 
-**With default settings, the strategy currently loses money after fees.** A profit factor below 1.0 means it loses.
-BTCUSD 4h is roughly break-even, but 37 trades are too few to trust. Treat the strategy as a starting point to improve.
-The order execution and risk layer are the parts that are ready to use.
+It was profitable in every calendar year on both coins, but BTC in 2025–2026 was only around break-even.
+On BTC, small changes to the settings move it to break-even, so the edge is thin. **Don't increase risk because of this table.**
 
-How often it trades: on BTCUSD 1h the bot averages about **1 trade every 4 days**. On 4h it averages about 1 trade every 3 weeks.
-**10–15 trades take roughly 6–8 weeks on 1h.** The bot does not trade every day.
-
----
-
-## How a trade works
-
-1. Every 20 seconds the bot checks whether a new candle has **closed**. It never uses an unfinished candle.
-2. **Buy signal:** EMA20 crosses above EMA50, price is above EMA200, and RSI < 70.
-   **Sell signal:** EMA20 crosses below EMA50, price is below EMA200, and RSI > 30.
-3. **Stop loss** = entry ± 1.5 × ATR(14). **Target** = 2 × the stop distance, giving 1:2 risk:reward.
-4. **Size** is set so that hitting the stop loses about `RISK_PER_TRADE` of capital (default 0.5%). Leverage also caps the size.
-5. The bot sends one market order with the stop loss and target attached (trigger = mark price).
-6. The bot then confirms the protective orders exist. If it can't confirm them, it **closes the position and halts**.
-
-Risk limits are saved in `state/risk_state.json`:
-- Daily loss limit (default −3%): no new trades for the rest of the day (UTC).
-- Max drawdown from peak (default −10%): the bot halts **permanently** until you reset it by hand.
-- Max trades per day (default 3). One position at a time.
+**How often it trades:** about 30 trades per coin per year. With BTC + ETH that is **about 5 trades a month**,
+so **10–15 trades take roughly 2–3 months.** Some months have none.
 
 ---
 
-## 1. Setup
+## 1. Install (Mac / Linux / Windows)
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+git clone https://github.com/Sumit211995/delta_bot.git && cd delta_bot
+python3 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env                                 # edit values. NEVER commit .env
-pytest -q tests                                      # 7 tests should pass
+cp .env.example .env
+pytest -q tests                                        # 9 tests should pass
 ```
-Keep your system clock synced (NTP). Delta rejects request signatures older than about 5 seconds.
 
-## 2. Backtest (no API keys needed)
+## 2. Test locally, step by step (no money, no API keys)
 
+The default `.env` is `DELTA_ENV=live` with `DRY_RUN=1`: **real live prices, paper trades only.**
+
+| Step | Command | What you should see |
+|---|---|---|
+| a. Backtest | `python backtest.py --days 1000 --symbol BTCUSD` | stats + per-year table |
+| | `python backtest.py --days 1000 --symbol ETHUSD` | |
+| b. Health check | `python bot.py --check` | each coin: price, ATR, RSI, trend, today's hypothetical SL/TP/size |
+| c. One pass | `python bot.py --once` | "candle … closed: no signal" or a PAPER BUY/SELL |
+| d. Run paper trading | `python bot.py` | keep it running; it logs every 4h candle |
+| e. Results | `python bot.py --status` | paper equity, open paper positions, wins/losses, last trades |
+
+Paper trading simulates the stop loss and target on real candles and keeps a paper balance
+(`logs/paper_trades.csv`, `state/paper_state.json`). To start paper trading fresh, delete those two files.
+Run paper mode for a few weeks first. It's free and shows you how the bot behaves.
+
+## 3. Get your Delta Exchange API key
+
+1. Log in at **india.delta.exchange** (KYC must be complete).
+2. Open your profile menu, go to **API Keys** (under AlgoHub / API management), and click **Create new API key**.
+3. Permissions: tick **Read Data** and **Trading**. Never enable withdrawals (the bot doesn't need them).
+4. **Whitelist IP:** Delta only accepts API calls from whitelisted IPs. Enter the public IP of the machine that runs the bot
+   (your home IP for local testing, then your server's IP once deployed). If a call is rejected, Delta's error message shows the IP to add.
+5. Copy the **API key** and **secret** into `.env`. The secret is shown only once. Never share it or commit it.
+
+**Testnet (demo) keys are separate:** create a demo account on Delta's testnet (the link is in Delta's API docs, docs.delta.exchange).
+Demo keys only work with `DELTA_ENV=testnet`, and live keys only work with `DELTA_ENV=live`.
+
+## 4. Testnet: real order flow with fake money (do this once)
+
+`.env`: `DELTA_ENV=testnet`, `DRY_RUN=0`, plus your demo key and secret.
 ```bash
-DELTA_ENV=live python backtest.py --days 730
-DELTA_ENV=live SYMBOL=ETHUSD RESOLUTION=4h python backtest.py --days 730
+python bot.py --check     # must show a wallet equity number and contract_value (BTCUSD 0.001, ETHUSD 0.01)
+python bot.py             # wait for a trade (may take days), or open a small manual position to test --panic
+python bot.py --panic     # must cancel orders AND close positions
 ```
-Check the profit factor (it must be > 1.2 to be worth anything), max drawdown, and number of trades (you want 100+).
-If a setting looks good on only one period or one coin, it is overfitted.
+In the Delta UI, check that the position shows **both a stop loss and a take profit**.
 
-## 3. Paper trade on live prices (no keys, no orders)
+## 5. Going live (your 10–15 test trades)
 
-```bash
-DELTA_ENV=live DRY_RUN=1 python bot.py --check   # product info, current signal, hypothetical SL/TP/size
-DELTA_ENV=live DRY_RUN=1 python bot.py           # logs the orders it WOULD place to logs/trades.csv
-```
-Note: dry-run logs every signal. It does not simulate "a position is already open" or the daily trade cap.
+- [ ] Paper mode ran for a while and the behaviour makes sense
+- [ ] Testnet: a bracket order showed SL + TP, and `--panic` worked
+- [ ] API key: Read + Trading only, IP whitelisted
+- [ ] `python bot.py --check` on live shows your wallet equity. **Check whether `WALLET_ASSET` is `USD` or `INR`.**
+      `BOT_CAPITAL_USD` must be in the same currency.
+- [ ] Telegram alerts arrive (section 8)
 
-## 4. Testnet (real order flow, fake money). Do this before going live.
-
-Create keys at testnet.delta.exchange (permissions: Read + Trade). Set `DELTA_ENV=testnet`, `DRY_RUN=0`, then run:
-```bash
-python bot.py --check     # wallet equity must show a sensible number for WALLET_ASSET; contract_value=0.001 for BTCUSD
-python bot.py             # wait for a trade
-python bot.py --panic     # confirm this cancels orders AND closes the position
-```
-In the Delta UI, check that the position shows **both a stop loss and a take profit**, and that the leverage is set.
-
-## 5. Going live (small first trades)
-
-Checklist:
-- [ ] Testnet: a bracket order showed SL + TP in the UI, and `--panic` worked
-- [ ] API key: **Read + Trade only, withdrawals disabled**, IP whitelist set (your VPS IP)
-- [ ] `--check` on live shows correct wallet equity. **Confirm whether `WALLET_ASSET` is `USD` or `INR`.**
-      `BOT_CAPITAL_USD` is compared against that number, so both must use the same currency.
-- [ ] `BOT_CAPITAL_USD` small, `RISK_PER_TRADE=0.005`, `MAX_LEVERAGE` 1–2
-- [ ] Telegram alerts arrive
-
-Then set the following in `.env`:
+`.env`:
 ```
 DELTA_ENV=live
 DRY_RUN=0
 LIVE_CONFIRM=I_UNDERSTAND_THE_RISK
+BOT_CAPITAL_USD=500
+RISK_PER_TRADE=0.005
 ```
-For a first test of 10–15 live trades: with `BOT_CAPITAL_USD=500` and 0.5% risk, each losing trade costs about **$2.50**.
-10 losses in a row (which the backtest shows can happen) cost about $25. After 15 trades, compare the win rate and average R
-in `logs/trades.csv` and on Delta against the backtest before you increase size.
+With $500 and 0.5% risk, each losing trade costs about **$2.50** and each winner makes about **$7.50**.
+**Note:** BTCUSD trades in 0.001 BTC contracts, so with small capital the bot may only take 1 contract (or skip the trade).
+ETH sizes are finer.
 
-Emergency stop: `python bot.py --panic` (or close the position in the Delta app). Stopping the bot with Ctrl+C
-**leaves an open position in place, protected by its exchange-side SL/TP.**
+**Judging 10–15 trades:** at a 30% win rate, 10 trades can easily be 2 wins and 8 losses (−$5) or 5 wins (+$25).
+15 trades is too few to prove anything. Judge the bot on: did every trade have an SL and TP, did sizes match the risk,
+and did the limits work. Judge profit only after 50+ trades.
 
-If the bot halts, read `halt_reason` in `state/risk_state.json`. Delete that file only after you understand why it halted.
+**Emergency:** `python bot.py --panic`, or close the position in the Delta app.
+Ctrl+C stops the bot, but **the open position keeps its SL/TP on the exchange.**
+If the bot halts, read `halt_reason` with `python bot.py --status`. Delete `state/risk_state.json` only after you understand why it halted.
 
 ---
 
-## 6. Deploy (24/7)
+## 6. Deploy for free (24/7)
 
-The bot must keep running, and it **must keep the `state/` folder between restarts**. That folder holds the halt flag and the
-last processed candle; if it is lost, the risk limits reset.
+The bot needs **a machine that is always on, with a fixed public IP** (for Delta's IP whitelist), and **persistent disk**
+for `state/`. It uses about 100 MB of RAM.
 
-**Docker / VPS (recommended):**
-```bash
-docker compose up -d --build     # uses .env, restart: unless-stopped, state/ and logs/ mounted on the host
-docker compose logs -f
-```
+| Option | Cost | Fixed IP | Verdict |
+|---|---|---|---|
+| **Oracle Cloud Always Free VM** (Mumbai/Hyderabad region) | Free forever | Yes | **Recommended** |
+| Your own laptop/PC | Free | Home IP (may change) | OK for testing; must stay awake (`caffeinate -i python bot.py` on Mac) |
+| Google Cloud e2-micro free tier | Free (US regions) | Check current IPv4 pricing | OK alternative |
+| Railway / Render / Fly | Not free for always-on workers (~$5/month) | Not on cheap plans | Not ideal |
 
-**Railway:** deploy from the GitHub repo (it builds the `Dockerfile`), add the `.env` values as service variables,
-and **attach a volume mounted at `/app/state`**. Without the volume, every redeploy wipes the risk state.
-Delta IP whitelisting needs a fixed outbound IP. Railway does not give one by default, so a small VPS is simpler.
+### Oracle Cloud Free: step by step
+1. Sign up at **cloud.oracle.com** (needs a card for verification; Always Free resources are not charged). Choose home region **India West (Mumbai)** or **India South (Hyderabad)**.
+2. **Create a VM instance:** image **Ubuntu 22.04**, shape **VM.Standard.E2.1.Micro** or **Ampere A1** (both "Always Free eligible").
+   Download the SSH key. Note the **public IP**.
+3. In Delta, **whitelist that public IP** on your API key.
+4. Connect and install:
+   ```bash
+   ssh -i your-key.pem ubuntu@<PUBLIC_IP>
+   sudo apt update && sudo apt install -y docker.io docker-compose-v2 git
+   sudo usermod -aG docker ubuntu && exit           # log in again after this
+   ssh -i your-key.pem ubuntu@<PUBLIC_IP>
+   git clone https://github.com/Sumit211995/delta_bot.git && cd delta_bot
+   cp .env.example .env && nano .env                 # paste keys, set DRY_RUN etc.
+   docker compose up -d --build                      # starts the bot, restarts automatically
+   docker compose logs -f                            # watch it (Ctrl+C only stops watching)
+   ```
+5. Useful commands on the server:
+   ```bash
+   docker compose exec delta-bot python bot.py --status
+   docker compose exec delta-bot python bot.py --panic
+   git pull && docker compose up -d --build          # update to the latest code
+   docker compose down                               # stop the bot (positions keep SL/TP)
+   ```
+`state/` and `logs/` live on the VM's disk (mounted by `docker-compose.yml`), so they survive restarts and updates.
 
 ---
 
@@ -130,41 +196,57 @@ Delta IP whitelisting needs a fixed outbound IP. Railway does not give one by de
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DELTA_ENV` | testnet | `testnet` or `live` |
-| `DRY_RUN` | 1 | 1 = log only; 0 = real orders |
-| `LIVE_CONFIRM` | | must be `I_UNDERSTAND_THE_RISK` for live + DRY_RUN=0 |
+| `DELTA_ENV` | live | `live` (real prices) or `testnet` (demo exchange) |
+| `DRY_RUN` | 1 | 1 = paper trading; 0 = real orders |
+| `LIVE_CONFIRM` | | must be `I_UNDERSTAND_THE_RISK` for live + `DRY_RUN=0` |
 | `DELTA_API_KEY` / `DELTA_API_SECRET` | | API keys (never commit) |
-| `WALLET_ASSET` | USD | asset used for equity; confirm with `--check` |
-| `SYMBOL` | BTCUSD | product symbol |
-| `RESOLUTION` | 1h | 15m, 30m, 1h, 2h, 4h, 1d |
+| `WALLET_ASSET` | USD | wallet asset used for equity; confirm with `--check` |
+| `SYMBOLS` | BTCUSD,ETHUSD | coins to trade (one position each) |
+| `RESOLUTION` | 4h | candle size. Tested on 4h; 1h/2h lost money |
+| `STRATEGY` | pullback | `pullback` or `ema_cross` (old) |
+| `RSI_PULLBACK` | 40 | pullback trigger level (shorts use 100 − this) |
 | `BOT_CAPITAL_USD` | 500 | max capital the bot sizes against |
-| `RISK_PER_TRADE` | 0.005 | fraction lost if the stop is hit (max 0.02) |
+| `RISK_PER_TRADE` | 0.005 | fraction of capital lost when a stop is hit (hard max 0.02) |
 | `MAX_LEVERAGE` | 2 | 1–10 |
 | `DAILY_LOSS_LIMIT` | 0.03 | stop for the day |
 | `MAX_DRAWDOWN` | 0.10 | permanent halt |
-| `MAX_TRADES_PER_DAY` | 3 | |
+| `MAX_TRADES_PER_DAY` | 3 | across all coins |
 | `ATR_STOP_MULT` | 1.5 | stop distance in ATRs |
-| `REWARD_RISK` | 2.0 | target = stop distance × this |
-| `FEE_RATE` | 0.0005 | per side (backtest only); check your fee tier |
+| `REWARD_RISK` | 3.0 | target = stop distance × this |
+| `FEE_RATE` | 0.0006 | per side incl. GST (backtest + paper P&L); check your fee tier |
 | `TELEGRAM_TOKEN` / `TELEGRAM_CHAT_ID` | | alerts |
-| `ML_MODEL_PATH` / `ML_THRESHOLD` | | optional ML filter |
+| `ML_MODEL_PATH` / `ML_THRESHOLD` | | optional ML filter (`python train_model.py`) |
 
-## 8. Optional ML filter
-`python train_model.py --days 1000` trains a filter on the strategy's past signals (chronological split). It saves the
-model only if the model improves the out-of-sample win rate. Usually it won't, and that is an honest result.
+## 8. Telegram alerts (recommended)
+1. In Telegram, message **@BotFather**, send `/newbot`, and copy the token into `TELEGRAM_TOKEN`.
+2. Send any message to your new bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser.
+   Copy `"chat":{"id": ...}` into `TELEGRAM_CHAT_ID`.
+3. You'll get messages for start, every entry (with SL/TP), closes, skips, errors and halts.
 
-## 9. India notes
-Fees plus 18% GST on fees reduce the edge of frequent trading. Ask a CA how crypto derivative P&L is taxed for you,
-and export your trade history regularly.
+## 9. Commands
+| Command | Does |
+|---|---|
+| `python bot.py --check` | connectivity, prices, signals, hypothetical SL/TP/size, wallet (if keys) |
+| `python bot.py` | run the loop |
+| `python bot.py --once` | process the latest closed candle once and exit |
+| `python bot.py --status` | risk state, paper equity, recent trades |
+| `python bot.py --panic` | cancel all orders and close all positions |
+| `python backtest.py --days 1000 --symbol ETHUSD --resolution 4h` | backtest |
+| `pytest -q tests` | unit tests |
+
+## 10. India notes
+Fees plus 18% GST on fees reduce the edge of frequent trading. That's one reason the bot uses 4h candles.
+Ask a CA how crypto-derivative P&L is taxed for you, and export your trade history from Delta regularly.
 
 ## Files
 | File | Purpose |
 |---|---|
-| `bot.py` | live loop, `--check`, `--panic` |
-| `strategy.py` | indicators, signals, SL/TP levels, ML hook |
-| `risk.py` | position sizing, daily loss / drawdown / trade cap |
-| `delta_client.py` | signed REST client (no auto-retry on orders) |
-| `backtest.py` / `train_model.py` | research tools |
+| `bot.py` | live/paper loop, `--check`, `--once`, `--status`, `--panic` |
+| `strategy.py` | indicators, signals (pullback / ema_cross), SL/TP levels |
+| `risk.py` | position sizing, daily loss / drawdown / trade cap, persisted state |
+| `paper.py` | paper-trade SL/TP simulation |
+| `delta_client.py` | signed Delta REST client (no auto-retry on orders) |
+| `backtest.py`, `train_model.py` | research tools |
 | `notifier.py` | Telegram alerts |
 | `Dockerfile`, `docker-compose.yml` | deployment |
-| `tests/` | 7 unit tests |
+| `tests/` | 9 unit tests |

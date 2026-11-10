@@ -92,3 +92,33 @@ def test_backtest_runs_and_is_consistent():
     assert 0 <= m["win_rate"] <= 1 and 0 <= m["max_drawdown"] <= 1
     assert abs(trades["pnl"].sum() / 1000 - m["total_return"]) < 0.5 or True  # compounding => not exact
     assert (trades["exit_time"] >= trades["entry_time"]).all()
+
+
+def test_pullback_signal_rules():
+    import dataclasses
+    cfg = Config(strategy="pullback", rsi_pullback=40)
+    n = cfg.ema_trend + 5
+    base = dict(atr=[10.0] * n, ema_fast=[0.0] * n)
+    up = pd.DataFrame(dict(close=[110.0] * n, ema_slow=[105.0] * n, ema_trend=[100.0] * n,
+                           rsi=[50.0] * (n - 2) + [35.0, 42.0], time=range(n), **base))
+    assert signal_at(up, n - 1, cfg).side == "buy"
+    up.loc[n - 1, "rsi"] = 39.0                              # still below 40: no signal
+    assert signal_at(up, n - 1, cfg) is None
+    dn = pd.DataFrame(dict(close=[90.0] * n, ema_slow=[95.0] * n, ema_trend=[100.0] * n,
+                           rsi=[50.0] * (n - 2) + [65.0, 58.0], time=range(n), **base))
+    assert signal_at(dn, n - 1, cfg).side == "sell"
+    dn.loc[:, "close"] = 101.0                                # price above trend EMA: no short
+    assert signal_at(dn, n - 1, cfg) is None
+    assert signal_at(up, n - 1, dataclasses.replace(cfg, strategy="ema_cross")) is None
+
+
+def test_paper_settle_stop_first_and_pnl():
+    import paper
+    pos = dict(side="buy", size=10, entry=100.0, sl=95.0, tp=115.0, cval=1.0, checked_until=0)
+    c = pd.DataFrame(dict(time=[0, 1, 2], open=[100] * 3, high=[101, 116, 120], low=[99, 94, 99], close=[100] * 3))
+    assert paper.settle(pos, c) == (95.0, 1, "stop")         # both hit in candle 1 -> stop first
+    pos2 = dict(side="sell", size=10, entry=100.0, sl=105.0, tp=85.0, cval=1.0, checked_until=0)
+    c2 = pd.DataFrame(dict(time=[1, 2], open=[100] * 2, high=[101, 102], low=[90, 84], close=[100] * 2))
+    assert paper.settle(pos2, c2) == (85.0, 2, "target")
+    assert abs(paper.pnl(pos2, 85.0, 0.0) - 150.0) < 1e-9
+    assert paper.settle(pos2, c2) is None                     # already-checked candles are skipped

@@ -1,5 +1,12 @@
 """Signal generation. Indicators are computed once; signal_at(i) only uses data up to candle i
-(a CLOSED candle), and entries happen on the next candle, so there is no look-ahead."""
+(a CLOSED candle), and entries happen on the next candle, so there is no look-ahead.
+
+Strategies (STRATEGY in .env):
+  pullback  (default) trend pullback: in an uptrend (EMA50 > EMA200 and close > EMA200) buy when RSI dips
+            below RSI_PULLBACK (40) and crosses back above it. Mirror image for shorts (RSI 60).
+            Walk-forward tested on BTC + ETH 4h, 2023-2026: small but positive edge on both coins.
+  ema_cross the original EMA20/50 crossover with EMA200 trend filter (loses money on 1h in recent years).
+"""
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -60,19 +67,40 @@ def ml_pass(sig: Signal, cfg) -> bool:
     return p >= cfg.ml_threshold
 
 
+def _ema_cross(d, i, row, prev, cfg):
+    up = prev["ema_fast"] <= prev["ema_slow"] and row["ema_fast"] > row["ema_slow"]
+    dn = prev["ema_fast"] >= prev["ema_slow"] and row["ema_fast"] < row["ema_slow"]
+    if up and row["close"] > row["ema_trend"] and row["rsi"] < 70:
+        return "buy", "EMA cross up, above trend EMA"
+    if dn and row["close"] < row["ema_trend"] and row["rsi"] > 30:
+        return "sell", "EMA cross down, below trend EMA"
+    return None, ""
+
+
+def _pullback(d, i, row, prev, cfg):
+    lo, hi = cfg.rsi_pullback, 100 - cfg.rsi_pullback
+    trend_up = row["ema_slow"] > row["ema_trend"] and row["close"] > row["ema_trend"]
+    trend_dn = row["ema_slow"] < row["ema_trend"] and row["close"] < row["ema_trend"]
+    if trend_up and prev["rsi"] < lo <= row["rsi"]:
+        return "buy", f"uptrend pullback: RSI back above {lo:g}"
+    if trend_dn and prev["rsi"] > hi >= row["rsi"]:
+        return "sell", f"downtrend pullback: RSI back below {hi:g}"
+    return None, ""
+
+
+STRATEGIES = {"pullback": _pullback, "ema_cross": _ema_cross}
+
+
 def signal_at(d: pd.DataFrame, i: int, cfg):
     if i < cfg.ema_trend + 2 or i >= len(d):
         return None
     row, prev = d.iloc[i], d.iloc[i - 1]
-    if np.isnan(row["atr"]) or np.isnan(row["rsi"]):
+    if np.isnan(row["atr"]) or np.isnan(row["rsi"]) or np.isnan(prev["rsi"]):
         return None
-    up = prev["ema_fast"] <= prev["ema_slow"] and row["ema_fast"] > row["ema_slow"]
-    dn = prev["ema_fast"] >= prev["ema_slow"] and row["ema_fast"] < row["ema_slow"]
-    if up and row["close"] > row["ema_trend"] and row["rsi"] < 70:
-        return Signal("buy", float(row["atr"]), "EMA cross up, above trend EMA", features(d, i, "buy"))
-    if dn and row["close"] < row["ema_trend"] and row["rsi"] > 30:
-        return Signal("sell", float(row["atr"]), "EMA cross down, below trend EMA", features(d, i, "sell"))
-    return None
+    side, reason = STRATEGIES[cfg.strategy](d, i, row, prev, cfg)
+    if side is None:
+        return None
+    return Signal(side, float(row["atr"]), reason, features(d, i, side))
 
 
 def round_tick(x: float, tick: float) -> float:

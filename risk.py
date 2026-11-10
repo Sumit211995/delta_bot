@@ -1,7 +1,7 @@
 """Risk manager: position sizing, daily loss limit, drawdown kill switch, trade cap. State persisted."""
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,7 +14,10 @@ class RiskState:
     trades_today: int = 0
     halted: bool = False
     halt_reason: str = ""
-    last_processed: int = 0
+    last_processed: int = 0                                  # legacy (single symbol)
+    last_processed_by: dict = field(default_factory=dict)   # symbol -> last closed candle time handled
+    paper_equity: float = 0.0                                # DRY_RUN only
+    paper_positions: dict = field(default_factory=dict)     # DRY_RUN only: symbol -> open paper position
 
 
 class RiskManager:
@@ -24,7 +27,9 @@ class RiskManager:
         self.state = RiskState()
         if self.path.exists():
             try:
-                self.state = RiskState(**json.loads(self.path.read_text()))
+                raw = json.loads(self.path.read_text())
+                known = {f.name for f in fields(RiskState)}
+                self.state = RiskState(**{k: v for k, v in raw.items() if k in known})
             except Exception:
                 self.state = RiskState()
 

@@ -3,9 +3,11 @@ Entry = open of the candle AFTER the signal candle. If stop and target are both 
 the STOP is assumed to hit first (pessimistic). Fees and slippage are applied on both sides.
 
   python backtest.py --days 365            # downloads public candles from Delta
+  python backtest.py --days 1000 --symbol ETHUSD --resolution 4h
   python backtest.py --csv data.csv        # columns: time,open,high,low,close,volume
 """
 import argparse
+import dataclasses
 import time
 
 import numpy as np
@@ -92,14 +94,28 @@ if __name__ == "__main__":
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--csv")
     ap.add_argument("--capital", type=float, default=1000.0)
+    ap.add_argument("--symbol")
+    ap.add_argument("--resolution")
+    ap.add_argument("--strategy")
     a = ap.parse_args()
     cfg = load_config()
+    over = {k: v for k, v in dict(symbol=a.symbol and a.symbol.upper(), resolution=a.resolution,
+                                    strategy=a.strategy).items() if v}
+    cfg = dataclasses.replace(cfg, **over)
     if a.csv:
         data = pd.read_csv(a.csv)
     else:
         from delta_client import DeltaClient
         data = fetch_history(DeltaClient(cfg.base_url), cfg.symbol, cfg.resolution, cfg.period_seconds, a.days)
-    print(f"{len(data)} candles, {cfg.symbol} {cfg.resolution}")
-    _, metrics = run_backtest(data, cfg, a.capital)
+    print(f"{len(data)} candles, {cfg.symbol} {cfg.resolution} strategy={cfg.strategy} "
+          f"SL={cfg.atr_stop_mult}xATR target={cfg.reward_risk}R fee={cfg.fee_rate}")
+    trades, metrics = run_backtest(data, cfg, a.capital)
     print(report(metrics))
+    if len(trades):
+        y = pd.to_datetime(trades.exit_time, unit="s").dt.year
+        print("\nper year:")
+        for yr, g in trades.groupby(y):
+            gl = -g.pnl[g.pnl <= 0].sum()
+            pf = g.pnl[g.pnl > 0].sum() / gl if gl else float("inf")
+            print(f"  {yr}: trades={len(g)} win_rate={g.win.mean():.0%} profit_factor={pf:.2f} pnl={g.pnl.sum():+.1f}")
     print("\nRULE: do not go live unless this holds on data you did NOT tune on (see README: walk-forward).")
