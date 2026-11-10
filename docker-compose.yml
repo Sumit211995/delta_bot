@@ -6,3 +6,14 @@ services:
     volumes:
       - ./state:/app/state
       - ./logs:/app/logs
+
+  dashboard:                       # read-only web page; reachable only from the server itself
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    command: ["python", "dashboard.py", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"      # open it from your laptop with: ssh -L 8000:localhost:8000 ubuntu@<SERVER_IP>
+    volumes:
+      - ./state:/app/state
+      - ./logs:/app/logs

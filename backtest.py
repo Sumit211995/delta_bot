@@ -6,6 +6,9 @@ the STOP is assumed to hit first (pessimistic). Fees and slippage are applied on
   python backtest.py --days 1000 --symbol ETHUSD --resolution 4h
   python backtest.py --csv data.csv        # columns: time,open,high,low,close,volume
 """
+import warnings
+
+warnings.filterwarnings("ignore", message=".*OpenSSL.*")
 import argparse
 import dataclasses
 import time

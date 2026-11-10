@@ -56,8 +56,19 @@ class Config:
     telegram_chat_id: str = ""
     ml_model_path: str = ""
     ml_threshold: float = 0.55
-    state_file: str = "state/risk_state.json"   # live/testnet; dry run uses state/paper_state.json
+    state_file: str = ""                      # override; default depends on mode (see state_path)
     log_dir: str = "logs"
+
+    @property
+    def state_path(self) -> str:
+        """Live has ONE state file. Paper keeps one per timeframe so 30m/1h/4h can be compared side by side."""
+        if self.state_file:
+            return self.state_file
+        return f"state/paper_state_{self.resolution}.json" if self.dry_run else "state/risk_state.json"
+
+    @property
+    def trades_path(self) -> str:
+        return f"{self.log_dir}/paper_trades_{self.resolution}.csv" if self.dry_run else f"{self.log_dir}/trades.csv"
 
     @property
     def base_url(self) -> str:
@@ -75,7 +86,6 @@ def load_config() -> Config:
     symbols = tuple(x.strip().upper() for x in raw.split(",") if x.strip())
     dry = g("DRY_RUN", "1") == "1"
     return Config(
-        state_file="state/paper_state.json" if dry else "state/risk_state.json",
         env=g("DELTA_ENV", "testnet").lower(),
         dry_run=dry,
         live_confirm=g("LIVE_CONFIRM", ""),

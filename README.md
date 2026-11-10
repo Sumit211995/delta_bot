@@ -83,22 +83,41 @@ cp .env.example .env
 pytest -q tests                                        # 9 tests should pass
 ```
 
-## 2. Test locally, step by step (no money, no API keys)
+## 2. Test locally, step by step (no money)
 
 The default `.env` is `DELTA_ENV=live` with `DRY_RUN=1`: **real live prices, paper trades only.**
+Open a terminal in the project folder first:
+```bash
+cd ~/Documents/Project/delta_bot
+source .venv/bin/activate              # you'll see (.venv) at the start of the line
+```
 
-| Step | Command | What you should see |
+| What | Command | What you'll see |
 |---|---|---|
-| a. Backtest | `python backtest.py --days 1000 --symbol BTCUSD` | stats + per-year table |
-| | `python backtest.py --days 1000 --symbol ETHUSD` | |
-| b. Health check | `python bot.py --check` | each coin: price, ATR, RSI, trend, today's hypothetical SL/TP/size |
-| c. One pass | `python bot.py --once` | "candle … closed: no signal" or a PAPER BUY/SELL |
-| d. Run paper trading | `python bot.py` | keep it running; it logs every 4h candle |
-| e. Results | `python bot.py --status` | paper equity, open paper positions, wins/losses, last trades |
+| Health check | `python bot.py --check` | each coin: price, trend, RSI, today's hypothetical SL/TP/size, wallet (if keys) |
+| **Start paper bot (4h)** | `caffeinate -i python bot.py` | "candle … closed: no signal" every 4h; "PAPER BUY/SELL …" when a setup appears |
+| Paper bot on 1h | `caffeinate -i python bot.py --resolution 1h` | same, every hour (separate paper record) |
+| Paper bot on 30m | `caffeinate -i python bot.py --resolution 30m` | same, every 30 min (separate paper record) |
+| **Dashboard (web page)** | `python dashboard.py` then open http://localhost:8000 | signals, SL/TP, chart, open trades, history |
+| Results | `python bot.py --status` (add `--resolution 1h` for the 1h record) | paper balance, open trades, wins/losses |
+| Backtest | `python backtest.py --days 1000 --symbol ETHUSD --resolution 4h` | past performance + per-year table |
+| Stop a running bot/dashboard | `Ctrl + C` in its terminal | open paper trades are kept; it resumes on restart |
 
-Paper trading simulates the stop loss and target on real candles and keeps a paper balance
-(`logs/paper_trades.csv`, `state/paper_state.json`). To start paper trading fresh, delete those two files.
-Run paper mode for a few weeks first. It's free and shows you how the bot behaves.
+Each command that keeps running (bot, dashboard) needs its own terminal tab. In VS Code, use the **+** in the terminal panel.
+To compare timeframes, run the 4h, 1h and 30m paper bots side by side and watch their results in the dashboard.
+In testing, **only 4h made money after fees**. 30m and 1h lost money (0 of 91 variations worked on unseen data).
+
+Paper records are kept per timeframe in `state/paper_state_<tf>.json` and `logs/paper_trades_<tf>.csv`.
+Delete those two files to restart a paper record from zero.
+
+### The dashboard
+`python dashboard.py` and then open **http://localhost:8000**. It is **read-only** and never places or cancels orders.
+- **Signals now:** a card for every coin × timeframe (30m / 1h / 4h). Each shows BUY / SELL / WAIT, trend, RSI, and in plain words what the
+  bot is waiting for. When there's a signal, it shows **Entry, Stop loss, Target, size, and money at risk vs reward**. The orange border marks the
+  timeframe the bot actually trades.
+- **Chart:** candles, EMA 50 and EMA 200, past BUY/SELL signals, and dashed **Entry / SL / TP lines** for open trades and new signals, plus RSI below.
+- **Open trades:** paper trades and your real Delta position (with its SL/TP), with live unrealised P&L.
+- **Recent trades:** entries and exits with P&L.
 
 ## 3. Get your Delta Exchange API key
 
@@ -179,7 +198,7 @@ for `state/`. It uses about 100 MB of RAM.
    git clone https://github.com/Sumit211995/delta_bot.git && cd delta_bot
    cp .env.example .env && nano .env                 # paste keys, set DRY_RUN etc.
    docker compose up -d --build                      # starts the bot, restarts automatically
-   docker compose logs -f                            # watch it (Ctrl+C only stops watching)
+   docker compose logs -f delta-bot                  # watch it (Ctrl+C only stops watching)
    ```
 5. Useful commands on the server:
    ```bash
@@ -188,6 +207,9 @@ for `state/`. It uses about 100 MB of RAM.
    git pull && docker compose up -d --build          # update to the latest code
    docker compose down                               # stop the bot (positions keep SL/TP)
    ```
+**Dashboard on the server:** it is started too, but only reachable from the server itself (safer). From your laptop run
+`ssh -i your-key.pem -L 8000:localhost:8000 ubuntu@<PUBLIC_IP>` and open http://localhost:8000.
+
 `state/` and `logs/` live on the VM's disk (mounted by `docker-compose.yml`), so they survive restarts and updates.
 
 ---
@@ -226,11 +248,14 @@ for `state/`. It uses about 100 MB of RAM.
 ## 9. Commands
 | Command | Does |
 |---|---|
-| `python bot.py --check` | connectivity, prices, signals, hypothetical SL/TP/size, wallet (if keys) |
-| `python bot.py` | run the loop |
+| `python bot.py --check` | connectivity, prices, signals, hypothetical SL/TP/size, wallet balances (if keys) |
+| `python bot.py` | run the loop (paper or live, depending on `DRY_RUN`) |
+| `python bot.py --resolution 1h` | run on another timeframe (30m, 1h, 2h, 4h); also works with `--status` and `--once` |
+| `python bot.py --symbols ETHUSD` | override the coin list |
 | `python bot.py --once` | process the latest closed candle once and exit |
-| `python bot.py --status` | risk state, paper equity, recent trades |
-| `python bot.py --panic` | cancel all orders and close all positions |
+| `python bot.py --status` | balance, open trades, wins/losses, last trades |
+| `python bot.py --panic` | cancel all orders and close all positions **(also your manual ones on those coins!)** |
+| `python dashboard.py` | web dashboard at http://localhost:8000 |
 | `python backtest.py --days 1000 --symbol ETHUSD --resolution 4h` | backtest |
 | `pytest -q tests` | unit tests |
 
@@ -248,5 +273,6 @@ Ask a CA how crypto-derivative P&L is taxed for you, and export your trade histo
 | `delta_client.py` | signed Delta REST client (no auto-retry on orders) |
 | `backtest.py`, `train_model.py` | research tools |
 | `notifier.py` | Telegram alerts |
+| `dashboard.py`, `dashboard.html` | read-only web dashboard |
 | `Dockerfile`, `docker-compose.yml` | deployment |
 | `tests/` | 9 unit tests |

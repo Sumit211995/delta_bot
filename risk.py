@@ -23,7 +23,7 @@ class RiskState:
 class RiskManager:
     def __init__(self, cfg, path=None):
         self.cfg = cfg
-        self.path = Path(path or cfg.state_file)
+        self.path = Path(path or cfg.state_path)
         self.state = RiskState()
         if self.path.exists():
             try:

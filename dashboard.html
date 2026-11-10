@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delta Bot Dashboard</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2; --surface: #fcfcfb; --surface-2: #efefec; --border: #dddcd7;
+  --text: #0b0b0b; --text-2: #52514e; --muted: #7a7974;
+  --ema50: #2a78d6; --ema200: #eb6834;
+  --up: #1baf7a; --down: #e34948; --neutral: #7a7974; --accent: #eb6834;
+  --buy-bg: #e3f6ee; --sell-bg: #fbe6e6; --wait-bg: #efefec;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #111111; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
+    --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+    --ema50: #3987e5; --ema200: #d95926;
+    --up: #199e70; --down: #e66767; --neutral: #8f8e86; --accent: #d95926;
+    --buy-bg: #12352a; --sell-bg: #3a1c1c; --wait-bg: #232321;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111111; --surface: #1a1a19; --surface-2: #232321; --border: #33332f;
+  --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+  --ema50: #3987e5; --ema200: #d95926;
+  --up: #199e70; --down: #e66767; --neutral: #8f8e86; --accent: #d95926;
+  --buy-bg: #12352a; --sell-bg: #3a1c1c; --wait-bg: #232321;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; letter-spacing: .3px; }
+.badge.paper { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); }
+.badge.live { background: var(--accent); color: #fff; }
+.muted { color: var(--muted); } .small { font-size: 12px; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.kpi .label { font-size: 12px; color: var(--muted); }
+.kpi .value { font-size: 18px; font-weight: 600; }
+.grid { display: grid; grid-template-columns: 90px repeat(3, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
+.grid .head { font-weight: 600; color: var(--text-2); font-size: 12px; text-transform: uppercase; padding: 0 4px; }
+.sym { font-weight: 700; display: flex; align-items: center; }
+.card { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--wait-bg); cursor: pointer; }
+.card.trading { outline: 2px solid var(--accent); outline-offset: -1px; }
+.card.buy { background: var(--buy-bg); } .card.sell { background: var(--sell-bg); }
+.card .top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.sig { font-weight: 700; font-size: 15px; }
+.sig.buy { color: var(--up); } .sig.sell { color: var(--down); } .sig.wait { color: var(--text-2); }
+.levels { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.levels .k { color: var(--muted); }
+.setup { margin-top: 6px; color: var(--text-2); font-size: 12px; }
+.tag { font-size: 11px; color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { background: var(--surface); color: var(--text-2); border: 0; padding: 6px 12px; cursor: pointer; font: inherit; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--surface-2); color: var(--text); font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
+.sw { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; }
+.sw.dash { background: repeating-linear-gradient(90deg, currentColor 0 4px, transparent 4px 7px); height: 2px; }
+#ohlc { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-2); min-height: 18px; }
+#chart { height: 380px; } #rsi { height: 120px; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.scroll { overflow-x: auto; }
+.pos { color: var(--up); } .neg { color: var(--down); }
+.err { color: var(--down); font-size: 12px; }
+details summary { cursor: pointer; font-weight: 600; }
+ol { padding-left: 20px; margin: 8px 0; }
+@media (max-width: 760px) {
+  .grid { grid-template-columns: 1fr; }
+  .grid .head { display: none; }
+  .sym { margin-top: 6px; }
+  #chart { height: 300px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Delta Bot Dashboard <span id="mode" class="badge paper">…</span></h1>
+      <div class="small muted" id="sub">Loading…</div>
+    </div>
+    <div class="small muted">Times in IST · refreshes every 30 s · read-only (places no orders)</div>
+  </header>
+
+  <div class="panel kpis" id="kpis"></div>
+
+  <div class="panel">
+    <h2>Signals now <span class="tag">(orange border = the timeframe the bot trades; click a card to chart it)</span></h2>
+    <div class="grid" id="signals"></div>
+    <div id="errors" class="err"></div>
+  </div>
+
+  <div class="panel">
+    <div class="controls">
+      <h2 style="margin:0 8px 0 0">Chart</h2>
+      <div class="seg" id="symSeg"></div>
+      <div class="seg" id="tfSeg"></div>
+    </div>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--ema50)"></span>EMA 50</span>
+      <span><span class="sw" style="background:var(--ema200)"></span>EMA 200 (trend line)</span>
+      <span style="color:var(--down)"><span class="sw dash"></span><span style="color:var(--text-2)">Stop loss</span></span>
+      <span style="color:var(--up)"><span class="sw dash"></span><span style="color:var(--text-2)">Target</span></span>
+      <span style="color:var(--neutral)"><span class="sw dash"></span><span style="color:var(--text-2)">Entry</span></span>
+      <span>▲ BUY / ▼ SELL = past signals</span>
+    </div>
+    <div id="ohlc"></div>
+    <div id="chart"></div>
+    <div class="small muted" style="margin-top:6px">RSI (14). The pullback triggers sit at <span id="rsiLv">40 / 60</span>.</div>
+    <div id="rsi"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Open trades</h2>
+    <div class="scroll"><table id="open"></table></div>
+    <div id="liveErr" class="err"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Recent trades</h2>
+    <div class="scroll"><table id="hist"></table></div>
+  </div>
+
+  <div class="panel">
+    <details>
+      <summary>How does the bot decide? (no prediction, just fixed rules)</summary>
+      <ol>
+        <li><b>Trend:</b> when EMA 50 is above EMA 200 and price is above EMA 200, it's an <b>uptrend</b> and the bot only buys. The opposite is a <b>downtrend</b>, where it only sells. Anything else is "mixed", and the bot stays out.</li>
+        <li><b>Pullback:</b> in an uptrend, the bot waits for a dip (RSI drops below <span class="rsiLo">40</span>). When a candle <i>closes</i> with RSI back above <span class="rsiLo">40</span>, that's a <b>BUY</b>. A downtrend uses the mirror rule at <span class="rsiHi">60</span> for a SELL.</li>
+        <li><b>Stop loss</b> = entry ∓ <span id="atrM">1.5</span> × ATR (the coin's normal move size). <b>Target</b> = <span id="rrM">3</span> × the stop distance.</li>
+        <li><b>Size</b> is chosen so that hitting the stop loses only the configured % of capital.</li>
+        <li>The order is sent <b>with</b> the SL and TP attached. Delta closes the trade at one of them, even if the bot is off.</li>
+      </ol>
+      <div class="small muted">It wins only about 30% of trades but earns about 3× on winners. Long losing streaks are normal. Not financial advice.</div>
+    </details>
+  </div>
+</div>
+
+<script>
+const IST = 19800;               // shift UTC → IST for display
+let state = { sym: null, tf: null, data: null };
+let chart, rsiChart, candleS, ema50S, ema200S, rsiS, priceLines = [];
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = (x, d = 2) => x === null || x === undefined || x === "" ? "–" : Number(x).toLocaleString("en-IN", { maximumFractionDigits: d });
+const istTime = t => new Date((t + IST) * 1000).toISOString().slice(5, 16).replace("T", " ");
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function countdown(t) {
+  const s = t - Math.floor(Date.now() / 1000);
+  if (s <= 0) return "closing now…";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return (h ? h + "h " : "") + m + "m";
+}
+
+function renderOverview(d) {
+  state.data = d;
+  const live = d.mode === "LIVE";
+  const mode = document.getElementById("mode");
+  mode.textContent = live ? "LIVE" : "PAPER";
+  mode.className = "badge " + (live ? "live" : "paper");
+  document.getElementById("sub").textContent =
+    `Strategy ${d.strategy} · bot trades ${d.resolution} · ${d.symbols.join(", ")} · env ${d.env} · updated ${istTime(d.generated)}`;
+  document.querySelectorAll(".rsiLo").forEach(e => e.textContent = d.rsi_level);
+  document.querySelectorAll(".rsiHi").forEach(e => e.textContent = 100 - d.rsi_level);
+  document.getElementById("rsiLv").textContent = `${d.rsi_level} / ${100 - d.rsi_level}`;
+  document.getElementById("atrM").textContent = d.atr_mult;
+  document.getElementById("rrM").textContent = d.rr;
+
+  const book = d.paper.find(b => b.tf === d.resolution);
+  const kpis = [
+    ["Mode", live ? "LIVE orders" : "Paper (no orders)"],
+    ["Wallet (Delta)", d.live.enabled ? (d.live.equity !== null ? fmt(d.live.equity, 2) + " USD" : "error") : "no API key"],
+    ["Bot capital cap", fmt(d.capital) + " USD"],
+    ["Risk per trade", (d.risk * 100).toFixed(1) + "%"],
+    ["Stop / Target", `${d.atr_mult}×ATR / ${d.rr}R`],
+    [`Paper balance (${d.resolution})`, book ? fmt(book.equity) : "not started"],
+  ];
+  document.getElementById("kpis").innerHTML = kpis.map(([l, v]) =>
+    `<div class="kpi"><div class="label">${l}</div><div class="value">${esc(v)}</div></div>`).join("");
+
+  const tfs = ["30m", "1h", "4h"];
+  let html = `<div class="head"></div>` + tfs.map(t => `<div class="head">${t}${t === d.resolution ? " · traded" : ""}</div>`).join("");
+  for (const sym of d.symbols) {
+    html += `<div class="sym">${sym}</div>`;
+    for (const tf of tfs) {
+      const c = d.cards.find(x => x.symbol === sym && x.tf === tf);
+      if (!c) { html += `<div class="card">–</div>`; continue; }
+      const s = c.signal, cls = s ? s.side : "wait";
+      const word = s ? (s.side === "buy" ? "▲ BUY" : "▼ SELL") : "WAIT";
+      const trendIcon = c.trend === "UP" ? "↗ Uptrend" : c.trend === "DOWN" ? "↘ Downtrend" : "↔ Mixed";
+      html += `<div class="card ${s ? s.side : ""} ${c.trading ? "trading" : ""}" data-sym="${sym}" data-tf="${tf}">
+        <div class="top"><span class="sig ${cls}">${word}</span><span class="small">${trendIcon}</span></div>
+        <div class="levels">
+          <span class="k">Price</span><span>${fmt(c.close)}</span>
+          <span class="k">RSI</span><span>${fmt(c.rsi, 1)}</span>
+          ${s ? `<span class="k">Entry</span><span>${fmt(s.entry)}</span>
+                 <span class="k">Stop loss</span><span class="neg">${fmt(s.sl)}</span>
+                 <span class="k">Target</span><span class="pos">${fmt(s.tp)}</span>
+                 <span class="k">Size</span><span>${s.size} contracts (risk ${fmt(s.risk)} → reward ${fmt(s.reward)})</span>` : ""}
+          <span class="k">Next close</span><span data-close="${c.next_close}">${countdown(c.next_close)}</span>
+        </div>
+        <div class="setup">${esc(s ? s.reason : c.setup)}</div>
+        <div class="tag">${esc(c.tested)}</div>
+      </div>`;
+    }
+  }
+  const grid = document.getElementById("signals");
+  grid.innerHTML = html;
+  grid.querySelectorAll(".card[data-sym]").forEach(el => el.onclick = () => {
+    state.sym = el.dataset.sym; state.tf = el.dataset.tf; buildSegs(); loadChart();
+    document.getElementById("chart").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  document.getElementById("errors").textContent = d.errors.join(" · ");
+
+  // open trades
+  const open = [...d.paper.flatMap(b => b.positions), ...(d.live.positions || [])];
+  document.getElementById("open").innerHTML = open.length
+    ? `<tr><th>Source</th><th>Coin</th><th>Side</th><th>Size</th><th>Entry</th><th>Stop loss</th><th>Target</th><th>Now</th><th>Unrealised P&L</th></tr>` +
+      open.map(p => `<tr><td>${esc(p.source)}</td><td>${p.symbol}</td><td class="${p.side === "buy" ? "pos" : "neg"}">${p.side.toUpperCase()}</td>
+        <td>${p.size}</td><td>${fmt(p.entry)}</td><td>${fmt(p.sl)}</td><td>${fmt(p.tp)}</td><td>${fmt(p.mark)}</td>
+        <td class="${(p.upnl || 0) >= 0 ? "pos" : "neg"}">${p.upnl === null ? "–" : (p.upnl >= 0 ? "+" : "") + fmt(p.upnl, 2)}</td></tr>`).join("")
+    : `<tr><td class="muted">No open trades. The bot waits for a signal on the traded timeframe.</td></tr>`;
+  let err = d.live.error ? "Delta account: " + d.live.error : "";
+  if (d.live.enabled && d.live.orders && d.live.orders.length && !(d.live.positions || []).length)
+    err += (err ? " · " : "") + `Note: ${d.live.orders.length} open order(s) on Delta with no bot position (manual orders?).`;
+  document.getElementById("liveErr").textContent = err;
+
+  // history
+  const hist = [...d.paper.flatMap(b => b.trades), ...d.live_trades].reverse().slice(0, 30);
+  document.getElementById("hist").innerHTML = hist.length
+    ? `<tr><th>Time (UTC)</th><th>Source</th><th>Coin</th><th>Event</th><th>Side</th><th>Size</th><th>Entry</th><th>SL</th><th>TP</th><th>Exit</th><th>P&L</th></tr>` +
+      hist.map(t => `<tr><td>${esc(t.time)}</td><td>${esc(t.source)}</td><td>${esc(t.symbol)}</td><td>${esc(t.event)}</td>
+        <td>${esc(String(t.side || "").toUpperCase())}</td><td>${fmt(t.size, 0)}</td><td>${fmt(t.entry)}</td><td>${fmt(t.sl)}</td>
+        <td>${fmt(t.tp)}</td><td>${fmt(t.exit)}</td><td class="${(t.pnl || 0) >= 0 ? "pos" : "neg"}">${t.pnl === null || t.pnl === undefined ? "" : fmt(t.pnl, 2)}</td></tr>`).join("")
+    : `<tr><td class="muted">No trades yet. Start the bot (python bot.py) and trades will appear here.</td></tr>`;
+
+  if (!state.sym) { state.sym = d.symbols[0]; state.tf = d.resolution; buildSegs(); loadChart(); }
+}
+
+function buildSegs() {
+  const d = state.data;
+  document.getElementById("symSeg").innerHTML = d.symbols.map(s => `<button class="${s === state.sym ? "on" : ""}" data-s="${s}">${s}</button>`).join("");
+  document.getElementById("tfSeg").innerHTML = ["30m", "1h", "4h"].map(t => `<button class="${t === state.tf ? "on" : ""}" data-t="${t}">${t}</button>`).join("");
+  document.querySelectorAll("#symSeg button").forEach(b => b.onclick = () => { state.sym = b.dataset.s; buildSegs(); loadChart(); });
+  document.querySelectorAll("#tfSeg button").forEach(b => b.onclick = () => { state.tf = b.dataset.t; buildSegs(); loadChart(); });
+}
+
+function initCharts() {
+  const opts = el => ({
+    width: el.clientWidth, height: el.clientHeight,
+    layout: { background: { color: css("--surface") }, textColor: css("--text-2") },
+    grid: { vertLines: { color: css("--surface-2") }, horzLines: { color: css("--surface-2") } },
+    rightPriceScale: { borderColor: css("--border") },
+    timeScale: { borderColor: css("--border"), timeVisible: true, secondsVisible: false },
+    crosshair: { mode: 0 },
+  });
+  const el = document.getElementById("chart"), el2 = document.getElementById("rsi");
+  chart = LightweightCharts.createChart(el, opts(el));
+  candleS = chart.addCandlestickSeries({ upColor: css("--up"), downColor: css("--down"), borderVisible: false,
+    wickUpColor: css("--up"), wickDownColor: css("--down") });
+  ema50S = chart.addLineSeries({ color: css("--ema50"), lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  ema200S = chart.addLineSeries({ color: css("--ema200"), lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  rsiChart = LightweightCharts.createChart(el2, opts(el2));
+  rsiS = rsiChart.addLineSeries({ color: css("--text-2"), lineWidth: 2, priceLineVisible: false });
+  // keep both charts scrolled together
+  chart.timeScale().subscribeVisibleLogicalRangeChange(r => r && rsiChart.timeScale().setVisibleLogicalRange(r));
+  rsiChart.timeScale().subscribeVisibleLogicalRangeChange(r => r && chart.timeScale().setVisibleLogicalRange(r));
+  chart.subscribeCrosshairMove(p => {
+    const c = p && p.seriesData ? p.seriesData.get(candleS) : null;
+    const e50 = p && p.seriesData ? p.seriesData.get(ema50S) : null;
+    const e200 = p && p.seriesData ? p.seriesData.get(ema200S) : null;
+    document.getElementById("ohlc").textContent = c
+      ? `${istTime(p.time - IST)} IST   O ${fmt(c.open)}  H ${fmt(c.high)}  L ${fmt(c.low)}  C ${fmt(c.close)}   EMA50 ${fmt(e50 && e50.value)}  EMA200 ${fmt(e200 && e200.value)}`
+      : "Hover the chart to see candle values.";
+  });
+  new ResizeObserver(() => {
+    chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+    rsiChart.applyOptions({ width: el2.clientWidth, height: el2.clientHeight });
+  }).observe(el);
+}
+
+async function loadChart() {
+  if (!state.sym) return;
+  const r = await fetch(`/api/chart?symbol=${state.sym}&tf=${state.tf}`);
+  const d = await r.json();
+  if (d.error) { document.getElementById("ohlc").textContent = "Chart error: " + d.error; return; }
+  const sh = a => a.map(x => ({ ...x, time: x.time + IST }));
+  candleS.setData(sh(d.candles));
+  ema50S.setData(sh(d.ema50));
+  ema200S.setData(sh(d.ema200));
+  rsiS.setData(sh(d.rsi));
+  candleS.setMarkers(d.markers.map(m => ({
+    time: m.time + IST, position: m.side === "buy" ? "belowBar" : "aboveBar",
+    color: m.side === "buy" ? css("--up") : css("--down"),
+    shape: m.side === "buy" ? "arrowUp" : "arrowDown", text: m.side === "buy" ? "BUY" : "SELL" })));
+  priceLines.forEach(([s, l]) => s.removePriceLine(l)); priceLines = [];
+  for (const L of d.lines) {
+    for (const [key, color, name] of [["entry", "--neutral", "Entry"], ["sl", "--down", "SL"], ["tp", "--up", "TP"]]) {
+      if (L[key] === null || L[key] === undefined) continue;
+      priceLines.push([candleS, candleS.createPriceLine({ price: L[key], color: css(color), lineWidth: 2, lineStyle: 2,
+        axisLabelVisible: true, title: `${L.label} ${name}` })]);
+    }
+  }
+  for (const lv of [d.rsi_level, 100 - d.rsi_level])
+    priceLines.push([rsiS, rsiS.createPriceLine({ price: lv, color: css("--muted"), lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "" })]);
+  chart.timeScale().fitContent();
+  document.getElementById("ohlc").textContent = `${d.symbol} ${d.tf}: hover the chart to see candle values.`;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/overview");
+    renderOverview(await r.json());
+  } catch (e) {
+    document.getElementById("sub").textContent = "Cannot reach the dashboard server. Is python dashboard.py still running?";
+  }
+}
+
+initCharts();
+refresh();
+setInterval(refresh, 30000);
+setInterval(loadChart, 60000);
+setInterval(() => document.querySelectorAll("[data-close]").forEach(e => e.textContent = countdown(+e.dataset.close)), 1000);
+</script>
+</body>
+</html>

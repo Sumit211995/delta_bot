@@ -5,9 +5,14 @@
   python bot.py --once      # process the latest closed candle once and exit (handy for testing)
   python bot.py --status    # show risk state, paper equity and open paper positions
   python bot.py --panic     # cancel all orders and close positions on every symbol now
+  python bot.py --resolution 1h          # override RESOLUTION (paper keeps a separate record per timeframe)
 """
+import warnings
+
+warnings.filterwarnings("ignore", message=".*OpenSSL.*")      # harmless macOS LibreSSL notice
+
 import argparse
-import json
+import dataclasses
 import logging
 import os
 import time
@@ -47,7 +52,7 @@ def fetch_closed_candles(client, cfg, symbol, bars=400) -> pd.DataFrame:
 
 def log_trade(cfg, row: dict):
     os.makedirs(cfg.log_dir, exist_ok=True)
-    path = f"{cfg.log_dir}/{'paper_trades' if cfg.dry_run else 'trades'}.csv"
+    path = cfg.trades_path
     pd.DataFrame([{k: row.get(k, "") for k in LOG_COLUMNS}]).to_csv(
         path, mode="a", header=not os.path.exists(path), index=False)
 
@@ -225,17 +230,34 @@ def check(client, cfg, markets):
 
 
 def status(cfg):
-    rm = RiskManager(cfg)
-    print(f"state file: {rm.path}")
-    print(json.dumps(rm.state.__dict__, indent=2, default=str))
-    path = f"{cfg.log_dir}/{'paper_trades' if cfg.dry_run else 'trades'}.csv"
-    if os.path.exists(path):
-        t = pd.read_csv(path)
+    s = RiskManager(cfg).state
+    mode = "PAPER (no real orders)" if cfg.dry_run else f"LIVE on {cfg.env}"
+    print(f"Mode: {mode} | timeframe {cfg.resolution} | coins {', '.join(cfg.symbols)}")
+    print("Bot halted: " + (f"YES - {s.halt_reason}" if s.halted else "no"))
+    if cfg.dry_run:
+        eq = s.paper_equity or cfg.bot_capital_usd
+        print(f"Paper balance: {eq:.2f} (started at {cfg.bot_capital_usd:.2f}, change {eq - cfg.bot_capital_usd:+.2f})")
+        if s.paper_positions:
+            print("Open paper trades:")
+            for sym, p in s.paper_positions.items():
+                print(f"  {sym} {p['side'].upper()} {p['size']} @ {p['entry']:.2f}  SL {p['sl']}  TP {p['tp']}  "
+                      f"(opened {p['opened']})")
+        else:
+            print("Open paper trades: none")
+    print("Last candle checked: " + (", ".join(f"{k} {fmt_t(v)}" for k, v in s.last_processed_by.items())
+                                     or "none yet (start the bot)"))
+    print(f"Trades today: {s.trades_today}/{cfg.max_trades_per_day}")
+    if os.path.exists(cfg.trades_path):
+        t = pd.read_csv(cfg.trades_path)
         ex = t[t["event"].isin(["stop", "target"])]
         if len(ex):
-            print(f"\nclosed trades={len(ex)} wins={int((ex.pnl > 0).sum())} losses={int((ex.pnl <= 0).sum())} "
-                  f"net P&L={ex.pnl.sum():+.2f}")
-        print(t.tail(10).to_string(index=False))
+            print(f"Closed trades: {len(ex)} | wins {int((ex.pnl > 0).sum())} | losses {int((ex.pnl <= 0).sum())} "
+                  f"| net P&L {ex.pnl.sum():+.2f}")
+        print("\nLast trades:")
+        print(t[["time", "symbol", "event", "side", "size", "entry", "sl", "tp", "exit", "pnl"]].tail(10)
+              .to_string(index=False))
+    else:
+        print("No trades yet. That's normal: the 4h strategy trades only a few times a week.")
 
 
 def main():
@@ -244,9 +266,18 @@ def main():
     ap.add_argument("--panic", action="store_true")
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--resolution", help="override RESOLUTION, e.g. 30m, 1h, 4h")
+    ap.add_argument("--symbols", help="override SYMBOLS, e.g. BTCUSD,ETHUSD")
     a = ap.parse_args()
     cfg = load_config()
+    if a.resolution:
+        cfg = dataclasses.replace(cfg, resolution=a.resolution)
+    if a.symbols:
+        syms = tuple(x.strip().upper() for x in a.symbols.split(",") if x.strip())
+        cfg = dataclasses.replace(cfg, symbols=syms, symbol=syms[0])
     validate(cfg)
+    if not cfg.dry_run and cfg.resolution != "4h":
+        print(f"WARNING: live trading on {cfg.resolution}. Only 4h was profitable in testing; 30m/1h lost money.")
     setup_logging(cfg)
     if a.status:
         return status(cfg)

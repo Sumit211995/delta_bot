@@ -6,6 +6,9 @@ Uses a CHRONOLOGICAL split (first 70% train, last 30% test). The model is saved 
 out-of-sample win rate of the trades it would take, with at least 30 test trades kept. Even then, treat the
 result as a hypothesis: confirm with forward testing before trusting it.
 """
+import warnings
+
+warnings.filterwarnings("ignore", message=".*OpenSSL.*")
 import argparse
 import os
 
