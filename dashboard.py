@@ -336,7 +336,7 @@ def live(sym, tf):
     return out
 
 
-RANGES = {"1M": 30, "3M": 91, "6M": 182, "1Y": 365, "2Y": 730}
+RANGES = {"1M": 30, "3M": 91, "6M": 182, "1Y": 365, "2Y": 730, "ALL": 1100}
 
 
 def history(sym, tf, days):
@@ -387,6 +387,78 @@ def chart(sym, tf, rng="3M"):
                           e50=col("ema_slow"), e200=col("ema_trend"), rsi=col("rsi", 2)))
 
 
+# ---------------------------------------------------------------- strategy history (every past trade, all timeframes)
+HIST_DAYS = 1100                      # Delta keeps ~2.5 years of candles; ask for a bit more
+_hist = dict(state="idle", done=0, total=0, books={}, updated=None, error=None)
+_hist_lock = threading.Lock()
+
+
+def _hist_book(sym, tf):
+    from backtest import simulate_trades
+    cfg = tf_cfg(tf)
+    recent = series(sym, tf)["live"][["time", "open", "high", "low", "close", "volume"]]
+    raw = pd.concat([history(sym, tf, HIST_DAYS), recent]).drop_duplicates("time", keep="last").sort_values("time")
+    d = add_indicators(raw.reset_index(drop=True), cfg)
+    cap = CFG.bot_capital_usd
+    trades = simulate_trades(d, cfg, capital=cap, now=time.time())
+    cval = product(sym)["cval"]
+    rows = []
+    for x in trades:
+        rows.append(dict(side=x["side"], sig=x["signal_time"], t0=x["entry_time"], entry=num(x["entry"], 6),
+                         sl=num(x["sl"], 6), tp=num(x["tp"], 6), t1=x["exit_time"], exit=num(x["exit"], 6),
+                         res=x["result"], pnl=num(x["pnl"]), r=num(x["r"]), eq=num(x["equity"]),
+                         ct=num(x["qty"] / cval, 1), risk=num(x["risk"])))
+    closed = [x for x in trades if x["result"] != "open"]
+    wins = [x for x in closed if x["pnl"] > 0]
+    gp, gl = sum(x["pnl"] for x in wins), -sum(x["pnl"] for x in closed if x["pnl"] <= 0)
+    years = {}
+    for x in closed:
+        y = time.gmtime(x["exit_time"]).tm_year
+        b = years.setdefault(y, dict(n=0, w=0, pnl=0.0))
+        b["n"] += 1; b["w"] += int(x["pnl"] > 0); b["pnl"] += float(x["pnl"])
+    end_eq = closed[-1]["equity"] if closed else cap
+    return dict(symbol=sym, tf=tf, first=int(d["time"].iloc[0]), last=int(d["time"].iloc[-1]), candles=len(d),
+                trades=rows, n=len(closed), wins=len(wins), win_rate=num(100 * len(wins) / len(closed), 1) if closed else None,
+                pf=num(gp / gl) if gl else None, net=num(end_eq - cap), ret=num(100 * (end_eq / cap - 1), 1),
+                max_dd=num(100 * max([x["dd"] for x in closed] or [0]), 1),
+                avg_r=num(sum(x["r"] for x in closed) / len(closed)) if closed else None,
+                start=cap, end=num(end_eq), open=any(x["result"] == "open" for x in trades),
+                years={str(k): dict(n=v["n"], w=v["w"], pnl=num(v["pnl"])) for k, v in sorted(years.items())})
+
+
+def _hist_run():
+    jobs = [(s, tf) for s in CFG.symbols for tf in TIMEFRAMES]
+    with _hist_lock:
+        _hist.update(state="running", done=0, total=len(jobs), error=None)
+    for s, tf in jobs:                                         # one at a time: be gentle with Delta's API
+        try:
+            book = _hist_book(s, tf)
+            with _hist_lock:
+                _hist["books"][f"{s}|{tf}"] = book
+        except Exception as e:
+            with _hist_lock:
+                _hist["error"] = f"{s} {tf}: {str(e)[:200]}"
+        with _hist_lock:
+            _hist["done"] += 1
+    with _hist_lock:
+        _hist.update(state="ready", updated=int(time.time()))
+
+
+def strategy_history():
+    """Start (or refresh every 30 min) the background run; return whatever is ready so far."""
+    with _hist_lock:
+        stale = _hist["state"] == "idle" or (_hist["state"] == "ready" and time.time() - (_hist["updated"] or 0) > 1800)
+        if stale:
+            _hist["state"] = "running"
+    if stale:
+        threading.Thread(target=_hist_run, daemon=True).start()
+    with _hist_lock:
+        return dict(state=_hist["state"], done=_hist["done"], total=_hist["total"] or len(CFG.symbols) * len(TIMEFRAMES),
+                    updated=_hist["updated"], error=_hist["error"], capital=CFG.bot_capital_usd,
+                    risk=CFG.risk_per_trade, fee=CFG.fee_rate, slippage_bps=CFG.slippage_bps,
+                    books=list(_hist["books"].values()))
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype):
         data = body if isinstance(body, bytes) else body.encode()
@@ -407,6 +479,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, (HERE / "dashboard.html").read_bytes(), "text/html; charset=utf-8")
             if u.path == "/api/overview":
                 return self._send(200, json.dumps(overview()), "application/json")
+            if u.path == "/api/history":
+                return self._send(200, json.dumps(strategy_history()), "application/json")
             if u.path == "/api/live":
                 return self._send(200, json.dumps(live(sym, tf)), "application/json")
             if u.path == "/api/chart":
@@ -427,6 +501,7 @@ def main():
     ap.add_argument("--host", default="127.0.0.1", help="keep 127.0.0.1 unless you know what you are doing")
     a = ap.parse_args()
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
+    threading.Thread(target=strategy_history, daemon=True).start()     # start computing past trades right away
     print(f"Dashboard running: http://localhost:{a.port}   (Ctrl+C to stop; read-only, places no orders)")
     try:
         srv.serve_forever()

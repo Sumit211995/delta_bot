@@ -226,6 +226,28 @@ tbody tr { transition: background .2s; } tbody tr:hover { background: var(--surf
 tr.jnew { animation: pop .6s both; }
 .why-row td { color: var(--muted); font-size: 12px; white-space: normal; padding-top: 0; }
 
+
+/* ---------- strategy history ---------- */
+.hgrid { display: grid; grid-template-columns: 70px repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.hcell { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px; cursor: pointer; position: relative;
+  transition: transform .2s, border-color .2s; animation: rise .5s both; overflow: hidden; }
+.hcell:hover { transform: translateY(-2px); border-color: var(--border-2); }
+.hcell.on { border-color: var(--text-2); }
+.hcell.good { background: linear-gradient(180deg, var(--up-soft), transparent 75%), var(--surface-2); }
+.hcell.bad { background: linear-gradient(180deg, var(--down-soft), transparent 75%), var(--surface-2); }
+.hcell .hv { font-size: 18px; font-weight: 600; } .hcell .hs { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.hcell .hk { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.hhead { font-size: 11px; color: var(--muted); font-weight: 700; letter-spacing: .6px; text-transform: uppercase; align-self: end; padding: 0 4px; }
+.hrow { display: flex; flex-direction: column; justify-content: center; font-weight: 700; }
+.hprog { height: 4px; border-radius: 4px; background: var(--surface-3); overflow: hidden; margin: 6px 0 14px; }
+.hprog i { display: block; height: 100%; background: var(--accent); transition: width .6s; }
+.pager { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 12px; font-size: 12px; color: var(--muted); }
+.pager button { border: 1px solid var(--border); background: var(--surface-2); padding: 5px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; color: var(--text-2); }
+.pager button:disabled { opacity: .4; cursor: default; }
+#hTbl tbody tr { cursor: pointer; }
+.st.sim { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+@media (max-width: 720px) { .hgrid { grid-template-columns: 44px repeat(3, minmax(0, 1fr)); gap: 6px; } .hcell { padding: 8px; } .hcell .hv { font-size: 14px; } }
+
 /* ---------- toasts ---------- */
 .toasts { position: fixed; right: 16px; top: 70px; z-index: 50; display: grid; gap: 10px; width: min(360px, calc(100vw - 32px)); }
 .toast { background: var(--surface); border: 1px solid var(--border-2); border-left: 4px solid var(--accent); border-radius: 12px;
@@ -393,6 +415,16 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
     </details>
   </div>
 
+  <div class="panel section" style="--i:8" id="histPanel">
+    <div class="ph"><h2>Strategy history · every past trade</h2><span class="hint" id="hHint">simulated on all available Delta data · loading…</span></div>
+    <div class="hprog" id="hProg"><i style="width:0%"></i></div>
+    <div class="hgrid" id="hGrid"></div>
+    <div class="filters" id="hFilters"></div>
+    <div class="scroll"><table id="hTbl"></table></div>
+    <div class="pager" id="hPager"></div>
+    <p class="sub" style="margin-top:12px" id="hNote"></p>
+  </div>
+
   <footer>Delta Bot dashboard · data from Delta Exchange India public API · refresh: prices 2 s, signals 10 s</footer>
 </div>
 <div class="toasts" id="toasts"></div>
@@ -412,6 +444,7 @@ const fmt = (x, d) => x === null || x === undefined || x === "" || isNaN(x) ? "�
 const px = x => fmt(x, dp(Math.abs(x || 0)));
 const money = x => (x > 0 ? "+" : x < 0 ? "−" : "") + "$" + fmt(Math.abs(x || 0), 2);
 const ist = t => new Date((t + IST) * 1000).toISOString().slice(5, 16).replace("T", " ");
+const istY = t => new Date((t + IST) * 1000).toISOString().slice(0, 16).replace("T", " ");
 const left = t => { const s = Math.max(0, t - Date.now() / 1000); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = Math.floor(s % 60);
   return h ? `${h}h ${m}m` : m ? `${m}m ${String(ss).padStart(2, "0")}s` : `${ss}s`; };
 const compact = x => x >= 1e9 ? (x / 1e9).toFixed(2) + "B" : x >= 1e6 ? (x / 1e6).toFixed(1) + "M" : fmt(x, 0);
@@ -458,7 +491,7 @@ function buildTf() {
   seg.querySelectorAll("button").forEach(b => b.onclick = () => select(S.sym, b.dataset.t));
   requestAnimationFrame(() => moveThumb(seg));
 }
-const RANGES = ["1M", "3M", "6M", "1Y", "2Y"];
+const RANGES = ["1M", "3M", "6M", "1Y", "2Y", "ALL"];
 S.range = RANGES.includes(storeGet("range")) ? storeGet("range") : "1Y";
 function buildRange() {
   const seg = $("rangeSeg");
@@ -827,6 +860,119 @@ function downloadCsv(rows) {
   a.download = `paper_trades_${new Date().toISOString().slice(0, 10)}.csv`; a.click();
 }
 
+
+/* ---------- strategy history (backtest of every past signal, all coins x timeframes) ---------- */
+S.h = null; S.hf = { coin: "all", tf: "all", res: "all", side: "all", year: "all" }; S.hPage = 0;
+const H_PAGE = 50, PER = { "30m": 1800, "1h": 3600, "4h": 14400 };
+async function pullHistory() {
+  try {
+    const d = await (await fetch("/api/history")).json();
+    if (d.error && !d.books) throw new Error(d.error);
+    S.h = d; renderHistory();
+    setTimeout(pullHistory, d.state === "ready" ? 600000 : 3000);
+  } catch (e) { $("hHint").textContent = "Could not load history: " + e.message; setTimeout(pullHistory, 15000); }
+}
+function hBook(sym, tf) { return S.h && S.h.books.find(b => b.symbol === sym && b.tf === tf); }
+function hRows() {
+  const out = [];
+  for (const b of S.h.books) for (const x of b.trades) out.push({ ...x, symbol: b.symbol, tf: b.tf });
+  return out.sort((a, b) => b.t0 - a.t0);
+}
+const yearOf = t => new Date((t + IST) * 1000).getUTCFullYear();
+function renderHistory() {
+  const d = S.h, ov = S.ov; if (!d || !ov) return;
+  const ready = d.state === "ready";
+  $("hProg").style.display = ready ? "none" : "";
+  $("hProg").firstElementChild.style.width = (d.total ? d.done / d.total * 100 : 0) + "%";
+  $("hHint").textContent = ready ? `simulated · start $${fmt(d.capital, 0)} per coin/timeframe · ${(d.risk * 100).toFixed(1)}% risk · fees ${(d.fee * 100).toFixed(2)}%/side + slippage · click a card to filter, a row to see it on the chart`
+    : `calculating ${d.done}/${d.total} (downloads ~2.5 years of candles, about 20 s)…`;
+  if (d.error) $("hHint").textContent += " · " + d.error;
+  // score grid: coins x timeframes
+  let g = `<div></div>` + TFS.map(tf => `<div class="hhead">${tf}${tf === ov.resolution ? ' <span style="color:var(--accent)">★ traded</span>' : " · watch only"}</div>`).join("");
+  for (const sym of ov.symbols) {
+    g += `<div class="hrow">${sym.replace("USD", "")}<small class="sub" style="font-weight:500">${sym}</small></div>`;
+    for (const tf of TFS) {
+      const b = hBook(sym, tf), on = S.hf.coin === sym && S.hf.tf === tf;
+      if (!b) { g += `<div class="hcell"><div class="hs">${ready ? "no data" : "calculating…"}</div></div>`; continue; }
+      const good = (b.ret || 0) > 0;
+      g += `<div class="hcell ${good ? "good" : "bad"} ${on ? "on" : ""}" data-s="${sym}" data-t="${tf}">
+        <div class="hk"><span>${b.n} trades</span><span>${b.win_rate === null ? "–" : b.win_rate + "% win"}</span></div>
+        <div class="hv mono ${good ? "pos-t" : "neg-t"}">${(b.ret > 0 ? "+" : "") + fmt(b.ret, 1)}%</div>
+        <div class="hs">$${fmt(b.start, 0)} → $${fmt(b.end, 0)} · PF ${b.pf === null ? "–" : fmt(b.pf, 2)} · max DD ${fmt(b.max_dd, 1)}%</div>
+        <div class="hs">since ${new Date((b.first + IST) * 1000).toISOString().slice(0, 10)}${b.open ? ' · <span style="color:var(--warn)">1 open</span>' : ""}</div></div>`;
+    }
+  }
+  const grid = $("hGrid");
+  if (grid.dataset.h !== g) { grid.innerHTML = g; grid.dataset.h = g;
+    grid.querySelectorAll(".hcell[data-s]").forEach(el => el.onclick = () => {
+      const same = S.hf.coin === el.dataset.s && S.hf.tf === el.dataset.t;
+      S.hf.coin = same ? "all" : el.dataset.s; S.hf.tf = same ? "all" : el.dataset.t; S.hPage = 0; renderHistory(); }); }
+  // filters
+  const all = hRows(), years = [...new Set(all.map(x => yearOf(x.t0)))].sort();
+  $("hFilters").innerHTML =
+    hChips("coin", "Coin", [["all", "All"], ...ov.symbols.map(s => [s, s.replace("USD", "")])]) +
+    hChips("tf", "Timeframe", [["all", "All"], ...TFS.map(t => [t, t])]) +
+    hChips("res", "Result", [["all", "All"], ["target", "✓ Target"], ["stop", "✕ Stop"], ["open", "Open"]]) +
+    hChips("side", "Side", [["all", "All"], ["buy", "▲ Buy"], ["sell", "▼ Sell"]]) +
+    hChips("year", "Year", [["all", "All"], ...years.map(y => [String(y), String(y)])]) +
+    `<button class="btn-dl" id="hDl">⬇ Download CSV</button>`;
+  $("hFilters").querySelectorAll(".fchips").forEach(gr => gr.querySelectorAll("button").forEach(b => b.onclick = () => {
+    S.hf[gr.dataset.k] = b.dataset.v; S.hPage = 0; renderHistory(); }));
+  const f = S.hf, rows = all.filter(x => (f.coin === "all" || x.symbol === f.coin) && (f.tf === "all" || x.tf === f.tf) &&
+    (f.res === "all" || x.res === f.res) && (f.side === "all" || x.side === f.side) && (f.year === "all" || String(yearOf(x.t0)) === f.year));
+  $("hDl").onclick = () => downloadHist(rows);
+  const closed = rows.filter(x => x.res !== "open"), wins = closed.filter(x => x.pnl > 0);
+  const gp = wins.reduce((a, x) => a + x.pnl, 0), gl = -closed.filter(x => x.pnl <= 0).reduce((a, x) => a + x.pnl, 0);
+  const pages = Math.max(1, Math.ceil(rows.length / H_PAGE)); S.hPage = Math.min(S.hPage, pages - 1);
+  const page = rows.slice(S.hPage * H_PAGE, (S.hPage + 1) * H_PAGE);
+  $("hTbl").innerHTML = !rows.length ? `<tbody><tr><td class="empty">${ready ? "No trades match these filters." : "Calculating past trades…"}</td></tr></tbody>` :
+    `<thead><tr><th>#</th><th>TF</th><th>Coin</th><th>Side</th><th>Signal candle closed (IST)</th><th>Entry</th><th>Stop loss</th><th>Target</th><th>Result</th><th>Exit</th><th>Exit candle (IST)</th><th>Held</th><th>P&L</th><th>R</th><th>Balance</th></tr></thead><tbody>` +
+    page.map((x, i) => {
+      const st = x.res === "open" ? `<span class="st open">OPEN</span>` : x.res === "target" ? `<span class="st won">✓ TARGET</span>` : `<span class="st lost">✕ STOP</span>`;
+      return `<tr data-i="${S.hPage * H_PAGE + i}" title="Click to see this trade on the chart"><td class="mono" style="color:var(--muted)">${rows.length - S.hPage * H_PAGE - i}</td>
+        <td><span class="tfb ${x.tf === ov.resolution ? "traded" : ""}">${x.tf}</span></td><td><b>${x.symbol}</b></td>
+        <td class="${x.side === "buy" ? "pos-t" : "neg-t"}"><b>${x.side === "buy" ? "▲ BUY" : "▼ SELL"}</b></td>
+        <td class="mono">${istY(x.t0)}</td><td class="mono">${px(x.entry)}</td><td class="mono neg-t">${px(x.sl)}</td><td class="mono pos-t">${px(x.tp)}</td>
+        <td>${st}</td><td class="mono">${x.exit === null ? "–" : px(x.exit)}</td><td class="mono">${x.t1 ? istY(x.t1 + PER[x.tf]) : "–"}</td>
+        <td class="mono">${dur(x.t0, x.t1 ? x.t1 + PER[x.tf] : null)}</td>
+        <td class="mono ${(x.pnl || 0) >= 0 ? "pos-t" : "neg-t"}">${x.pnl === null ? "–" : money(x.pnl)}</td>
+        <td class="mono ${(x.r || 0) >= 0 ? "pos-t" : "neg-t"}">${x.r === null ? "–" : (x.r > 0 ? "+" : "") + fmt(x.r, 2) + "R"}</td>
+        <td class="mono">$${fmt(x.eq)}</td></tr>`; }).join("") + "</tbody>";
+  $("hTbl").querySelectorAll("tbody tr[data-i]").forEach(tr => tr.onclick = () => showTrade(rows[+tr.dataset.i]));
+  $("hPager").innerHTML = rows.length > H_PAGE ? `<button id="hPrev" ${S.hPage ? "" : "disabled"}>‹ Newer</button>
+    <span>page ${S.hPage + 1} of ${pages} · ${rows.length.toLocaleString()} trades</span><button id="hNext" ${S.hPage < pages - 1 ? "" : "disabled"}>Older ›</button>` : "";
+  if ($("hPrev")) { $("hPrev").onclick = () => { S.hPage--; renderHistory(); }; $("hNext").onclick = () => { S.hPage++; renderHistory(); }; }
+  $("hNote").innerHTML = rows.length ? `Selection: <b>${closed.length}</b> closed trades · win rate <b>${closed.length ? (wins.length / closed.length * 100).toFixed(1) : "–"}%</b> ·
+    profit factor <b>${gl ? (gp / gl).toFixed(2) : "–"}</b> · net <b class="${gp - gl >= 0 ? "pos-t" : "neg-t"}">${money(gp - gl)}</b>.
+    Each coin/timeframe pair is simulated on its own $${fmt(d.capital, 0)} balance (compounding), entering at the open of the candle after the signal, stop checked before target.
+    These are <b>simulated past results</b>, not real trades; the future can differ.` : "";
+}
+function hChips(key, label, opts) {
+  return `<span class="lbl">${label}</span><span class="fchips" data-k="${key}">` +
+    opts.map(([v, t]) => `<button data-v="${v}" class="${S.hf[key] === v ? "on" : ""}">${t}</button>`).join("") + "</span>";
+}
+function downloadHist(rows) {
+  const cols = ["tf", "symbol", "side", "entry_ist", "entry", "sl", "tp", "res", "exit", "exit_candle_ist", "pnl", "r", "eq", "ct"];
+  const q = v => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const body = rows.map(x => cols.map(c => q(c === "entry_ist" ? istY(x.t0) : c === "exit_candle_ist" ? (x.t1 ? istY(x.t1 + PER[x.tf]) : "") : x[c])).join(","));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([[cols.join(","), ...body].join("\n")], { type: "text/csv" }));
+  a.download = `strategy_history_${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+}
+async function showTrade(x) {
+  const ageDays = (Date.now() / 1000 - x.t0) / 86400;
+  const need = ageDays < 28 ? "1M" : ageDays < 88 ? "3M" : ageDays < 178 ? "6M" : ageDays < 360 ? "1Y" : ageDays < 725 ? "2Y" : "ALL";
+  if (RANGES.indexOf(need) > RANGES.indexOf(S.range)) { S.range = need; storeSet("range", S.range); buildRange(); }
+  S.sym = x.symbol; S.tf = x.tf; buildTf(); renderTickers(); renderMatrix(); renderSide();
+  window.scrollTo({ top: $("chartBox").getBoundingClientRect().top + window.scrollY - 140, behavior: "smooth" });
+  await loadChart(true);
+  const per = PER[x.tf], end = (x.t1 || Date.now() / 1000) + IST;
+  chart.timeScale().setVisibleRange({ from: x.t0 + IST - per * 60, to: end + per * 30 });
+  for (const [k, c, n] of [["entry", "--neutral", "Past entry"], ["sl", "--down", "Past SL"], ["tp", "--up", "Past target"]])
+    priceLines.push([candleS, candleS.createPriceLine({ price: x[k], color: css(c), lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: n })]);
+  $("ohlc").textContent = `Showing past ${x.side.toUpperCase()} on ${x.symbol} ${x.tf}: entry ${px(x.entry)} at ${istY(x.t0)} IST → ${x.res === "open" ? "still open" : x.res.toUpperCase() + " " + px(x.exit)} · ${S.chartInfo}`;
+}
+
 /* ---------- signal banners (one per coin, on the timeframe the bot trades) ---------- */
 const DEMO = new URLSearchParams(location.search).has("demo");
 function injectDemo(d) {
@@ -939,7 +1085,7 @@ async function pullOverview() {
     document.querySelectorAll(".rsiHi").forEach(e => e.textContent = 100 - d.rsi_level);
     $("rsiLv").textContent = `${d.rsi_level} / ${100 - d.rsi_level}`; $("hAtr").textContent = d.atr_mult; $("hRr").textContent = d.rr;
     if (!S.sym) { S.sym = d.symbols[0]; S.tf = d.resolution; buildTf(); buildRange(); loadChart(true); }
-    renderTickers(); renderBanners(); renderMatrix(); renderSide(); renderKpis(); renderTable(); renderJournal();
+    renderTickers(); renderBanners(); renderMatrix(); renderSide(); renderKpis(); renderTable(); renderJournal(); if (S.h && S.first) renderHistory();
     S.first = false;
   } catch (e) { toast("Dashboard", "Could not load signals: " + e.message, ""); }
 }
@@ -970,7 +1116,7 @@ function tick() {
 }
 
 initCharts();
-pullOverview().then(pullLive);
+pullOverview().then(() => { pullLive(); pullHistory(); });
 setInterval(pullLive, 2000);
 setInterval(pullOverview, 10000);
 setInterval(tick, 1000);

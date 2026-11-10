@@ -272,11 +272,12 @@ Start it with `python dashboard.py` and open **http://localhost:8000**.
 | **Top bar** | Mode (PAPER / LIVE), connection status, alerts button 🔕/🔔, light/dark switch |
 | **Price strip** | Live price of each coin (updates every 2 s, flashes green/red), 24h high/low, funding, volume |
 | **Signal cards (one per coin)** | **NO SIGNAL** (grey, radar animation, what it is waiting for, countdown) · **▲ BUY SIGNAL / ▼ SELL SIGNAL** (pops in, glows, shows entry / SL / target / size / risk → reward) · **IN TRADE** (live P&L) |
-| **Chart** | Candles with EMA 50 / EMA 200, **B** (buy) and **S** (sell) markers for every past signal, SL / target / entry lines for open trades, RSI pane with the 40/60 levels. History: 1M, 3M, 6M, 1Y, 2Y. Timeframes: 30m, 1h, 4h. The last candle moves live. |
+| **Chart** | Candles with EMA 50 / EMA 200, **B** (buy) and **S** (sell) markers for every past signal, SL / target / entry lines for open trades, RSI pane with the 40/60 levels. History: 1M, 3M, 6M, 1Y, 2Y, ALL. Timeframes: 30m, 1h, 4h. The last candle moves live. |
 | **Signal ticket + rule checklist** | The three rules with ✓ / … / ✕, and a ring counting down to the next candle close |
 | **Signals across timeframes** | A tile per coin per timeframe: NO SIGNAL / BUY / SELL, RSI meter, trend, time to next close |
 | **Paper trading · 30m vs 1h vs 4h** | A score card per timeframe (balance, P&L, win rate, W/L, average R, max drawdown, open trades) and a **trade journal**: one row per trade with timeframe, coin, side, opened time, **entry, stop loss, target**, status (OPEN / ✓ TARGET / ✕ STOP), exit, closed time, time held, P&L and R. Filters for timeframe / coin / status, and **Download CSV**. |
 | **Account & risk** | Mode, Delta wallet, risk settings |
+| **Strategy history · every past trade** (bottom of the page) | The strategy replayed on **all available Delta data** (about 2.5 years) for every coin and every timeframe: a score card per coin × timeframe (trades, win rate, return, profit factor, max drawdown) and a table of **every past trade** with entry, stop loss, target, result, exit, time held, P&L, R and balance. Filters for coin / timeframe / result / side / year, 50 trades per page, **Download CSV**, and **click any row to see that trade on the chart** with its entry/SL/target lines. Simulated with fees and slippage on a separate $500 balance per coin/timeframe. |
 | **Open trades / Event log / Delta orders** | Open positions with live P&L, the raw bot log, and your real open orders on Delta (read-only) |
 
 Other features: `?demo` in the URL shows an example signal (nothing is traded), desktop notifications and a

@@ -18,7 +18,7 @@ import pandas as pd
 
 from config import load_config
 from risk import RiskManager
-from strategy import add_indicators, levels, signal_at
+from strategy import add_indicators, levels, signal_at, signals_vectorized
 
 
 def fetch_history(client, symbol, resolution, period_s, days):
@@ -81,6 +81,48 @@ def run_backtest(df: pd.DataFrame, cfg, capital: float = 1000.0, contract_value:
                    profit_factor=float(gp / gl) if gl > 0 else float("inf"),
                    total_return=float(equity / capital - 1), max_drawdown=float(max_dd),
                    after_30pct_tax_return=float(after_tax / capital), buy_hold=bh)
+
+
+def simulate_trades(d: pd.DataFrame, cfg, capital: float = 500.0, now: float = None):
+    """Fast version of run_backtest() for the dashboard: same rules, same order of checks (tests/test_core.py proves
+    the trades match), but uses signals_vectorized() and plain arrays so 2.5 years of 30m candles take milliseconds.
+    `d` must already have indicators. Returns a list of trade dicts, including SL/TP, plus a still-open last trade.
+    Only candles that are CLOSED at `now` can create a signal (the forming candle is ignored, like the live bot)."""
+    sig = signals_vectorized(d, cfg)
+    if now is not None:
+        sig[(d["time"].to_numpy() + cfg.period_seconds) > now] = 0
+    t, o, h, l, atr = (d[k].to_numpy(dtype=float) for k in ("time", "open", "high", "low", "atr"))
+    slip = cfg.slippage_bps / 10000
+    equity, peak, out, pos, pending = capital, capital, [], None, None
+    for j in range(len(d)):
+        if pending is not None and pos is None:
+            side, a, st = pending
+            entry = o[j] * (1 + slip if side == "buy" else 1 - slip)
+            sl, tp = levels(side, entry, a, cfg)
+            risk_amt = equity * cfg.risk_per_trade
+            qty = min(risk_amt / abs(entry - sl), equity * cfg.max_leverage / entry)
+            pos = dict(side=side, signal_time=int(st), entry_time=int(t[j]), entry=entry, sl=sl, tp=tp, qty=qty,
+                       risk=risk_amt, equity_before=equity)
+            pending = None
+        if pos is not None:
+            long = pos["side"] == "buy"
+            hit_sl = l[j] <= pos["sl"] if long else h[j] >= pos["sl"]
+            hit_tp = h[j] >= pos["tp"] if long else l[j] <= pos["tp"]
+            if hit_sl or hit_tp:
+                exit_p = pos["sl"] if hit_sl else pos["tp"]
+                pnl = (exit_p - pos["entry"]) * pos["qty"] * (1 if long else -1) \
+                    - cfg.fee_rate * pos["qty"] * (pos["entry"] + exit_p)
+                equity += pnl
+                peak = max(peak, equity)
+                out.append({**pos, "exit_time": int(t[j]), "exit": exit_p, "result": "stop" if hit_sl else "target",
+                            "pnl": pnl, "r": pnl / pos["risk"], "equity": equity, "dd": (peak - equity) / peak})
+                pos = None
+        if pos is None and pending is None and sig[j]:
+            pending = ("buy" if sig[j] > 0 else "sell", atr[j], t[j])
+    if pos is not None:
+        out.append({**pos, "exit_time": None, "exit": None, "result": "open", "pnl": None, "r": None,
+                    "equity": equity, "dd": None})
+    return out
 
 
 def report(m: dict) -> str:

@@ -133,6 +133,8 @@ Delete those two files to restart a paper record from zero.
 - **Alerts:** a new signal shows a pop-up, flashes the browser tab title, and (after clicking 🔕 → 🔔) sends a desktop notification.
 - **Account & risk, Open trades / History / Delta orders** tabs, a pop-up notification when a new signal appears, and a light/dark toggle (◐).
 
+**Strategy history (bottom of the page):** every trade the strategy would have taken over the last ~2.5 years, for BTC, ETH and SOL on 30m, 1h and 4h, with entry, SL, target, result and P&L. There's a score card per coin/timeframe, filters, CSV export, and you can click a row to jump to that trade on the chart. These are simulated results (fees + slippage included), not real trades.
+
 ## 3. Get your Delta Exchange API key
 
 1. Log in at **india.delta.exchange** (KYC must be complete).

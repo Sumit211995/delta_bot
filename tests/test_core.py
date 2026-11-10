@@ -157,3 +157,16 @@ def test_paper_books_are_separate_and_never_live():
     assert len({c.state_path for c in books}) == 4                 # live state never shared with a paper book
     paper = dataclasses.replace(live, dry_run=True)
     assert [c.resolution for c in books_for(paper)] == ["4h", "30m", "1h"]   # no duplicate 4h paper book
+
+
+def test_fast_simulator_matches_backtest():
+    from backtest import simulate_trades
+    cfg = Config(resolution="1h", risk_per_trade=0.01)
+    for seed in (1, 2, 3):
+        df = synthetic(4000, seed)
+        ref, _ = run_backtest(df, cfg, capital=1000.0)
+        fast = [x for x in simulate_trades(add_indicators(df, cfg), cfg, capital=1000.0) if x["result"] != "open"]
+        assert len(fast) == len(ref) and len(ref) > 5
+        for a, (_, b) in zip(fast, ref.iterrows()):
+            assert a["entry_time"] == b.entry_time and a["exit_time"] == b.exit_time and a["side"] == b.side
+            assert abs(a["pnl"] - b.pnl) < 1e-9 and abs(a["equity"] - b.equity) < 1e-6
