@@ -76,8 +76,11 @@ class DeltaClient:
         return sorted(data["result"], key=lambda c: c["time"])
 
     # --------------------------------------------------------------- private
+    def get_balances(self):
+        return self.request("GET", "/v2/wallet/balances", auth=True)["result"]
+
     def get_wallet_equity(self, asset):
-        res = self.request("GET", "/v2/wallet/balances", auth=True)["result"]
+        res = self.get_balances()
         for row in res:
             if str(row.get("asset_symbol", "")).upper() == asset.upper():
                 return float(row.get("balance", 0))

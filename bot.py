@@ -212,7 +212,12 @@ def check(client, cfg, markets):
             print("  position size:", client.position_size(m["pid"]),
                   "| open orders:", len(client.get_open_orders(m["pid"])))
     if cfg.api_key and cfg.api_secret:
-        print(f"\nwallet {cfg.wallet_asset} equity:", client.get_wallet_equity(cfg.wallet_asset))
+        print("\nwallet balances returned by the API (set WALLET_ASSET to the one holding your money):")
+        for b in client.get_balances():
+            if float(b.get("balance", 0) or 0) != 0:
+                print(f"  asset={b.get('asset_symbol')} balance={b.get('balance')} "
+                      f"available={b.get('available_balance')}")
+        print(f"wallet {cfg.wallet_asset} equity used by the bot:", client.get_wallet_equity(cfg.wallet_asset))
     else:
         print("\n(no API keys set: skipped private checks)")
 
