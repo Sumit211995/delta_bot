@@ -17,6 +17,7 @@ import argparse
 import dataclasses
 import json
 import math
+import re
 import os
 import threading
 import time
@@ -277,6 +278,18 @@ def paper_books():
     return books
 
 
+def friendly_error(msg):
+    """Turn Delta's IP-whitelist error into a clear instruction (the raw error is still logged by the bot)."""
+    m = re.search(r'ip_not_whitelisted_for_api_key.*?"client_ip": "([^"]+)"', msg)
+    if m:
+        ip = m.group(1)
+        kind = "IPv6" if ":" in ip else "IPv4"
+        return (f"Your current {kind} address {ip} is not whitelisted on your Delta API key. "
+                f"Add it in Delta → Account → API Keys → edit key → whitelisted IPs (mobile-data IPs change often; "
+                f"a server with a fixed IP fixes this for good).")
+    return msg[:300]
+
+
 def live_account():
     if not (CFG.api_key and CFG.api_secret):
         return dict(enabled=False)
@@ -304,7 +317,7 @@ def live_account():
                                                  size=abs(size), cval=product(sym)["cval"],
                                                  entry=num(pos.get("entry_price")), sl=sl, tp=tp, mark=num(mark_price(sym))))
         except Exception as e:                       # show the error on the page instead of crashing
-            out["error"] = str(e)[:300]
+            out["error"] = friendly_error(str(e))
         return out
     return cached(("live",), 10, load)
 

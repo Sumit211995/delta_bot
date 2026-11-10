@@ -204,3 +204,10 @@ def test_trailing_book_is_paper_only():
     import dataclasses
     with pytest.raises(SystemExit):
         validate(dataclasses.replace(cfg, exit_mode="trail"))      # never live with the trailing exit (yet)
+
+
+def test_delta_requests_use_ipv4_for_the_whitelist():
+    import socket
+    import urllib3.util.connection as c
+    import delta_client  # noqa: F401  (importing applies the IPv4 setting)
+    assert c.allowed_gai_family() == socket.AF_INET

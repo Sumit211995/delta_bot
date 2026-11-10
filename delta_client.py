@@ -3,16 +3,30 @@ import hashlib
 import hmac
 import json
 import logging
+import os
+import socket
 import time
 from urllib.parse import urlencode
 
 import requests
+import urllib3.util.connection as _u3conn
 
 log = logging.getLogger("delta")
 
 
 class DeltaError(Exception):
     pass
+
+
+def force_ipv4():
+    """Delta's API-key whitelist is checked against the IP your request comes from. Mobile/home internet in India
+    often prefers IPv6, which changes and is usually not whitelisted -> 'ip_not_whitelisted_for_api_key'. Sending
+    over IPv4 makes the request come from the IPv4 address you whitelisted. Disable with DELTA_ALLOW_IPV6=1."""
+    if os.getenv("DELTA_ALLOW_IPV6", "0") != "1":
+        _u3conn.allowed_gai_family = lambda: socket.AF_INET
+
+
+force_ipv4()
 
 
 def sign(secret: str, method: str, ts: str, path: str, query: str, payload: str) -> str:
