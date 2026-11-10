@@ -113,7 +113,7 @@ button { font: inherit; color: inherit; }
 
 /* ---------- ticket ---------- */
 .ticket .status { display: flex; align-items: center; gap: 12px; }
-.badge-big { font-size: 22px; font-weight: 800; letter-spacing: .5px; padding: 6px 14px; border-radius: 12px; }
+.badge-big { font-size: 18px; font-weight: 800; letter-spacing: .5px; padding: 8px 14px; border-radius: 12px; white-space: nowrap; }
 .badge-big.buy { color: var(--up); background: var(--up-soft); } .badge-big.sell { color: var(--down); background: var(--down-soft); }
 .badge-big.wait { color: var(--text-2); background: var(--surface-2); }
 .badge-big.pos { color: var(--accent); background: var(--accent-soft); }
@@ -215,6 +215,51 @@ details.how[open] summary::before { transform: rotate(90deg); }
 .err { color: var(--down); font-size: 12px; margin-top: 8px; }
 footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; }
 
+/* ---------- signal banners ---------- */
+.banners { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); gap: 12px; margin-top: 16px; }
+.banner { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 16px; align-items: center; cursor: pointer; position: relative; overflow: hidden; }
+.banner:hover { border-color: var(--border-2); }
+.banner .ic { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; font-weight: 800; position: relative; }
+.banner .ic span { position: relative; z-index: 2; }
+.banner .kicker { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.banner .title { font-size: 22px; font-weight: 800; letter-spacing: .3px; line-height: 1.15; margin: 2px 0 4px; }
+.banner .why { color: var(--text-2); font-size: 13px; }
+.banner .foot { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); align-items: center; }
+.banner .foot b { color: var(--text); font-weight: 600; }
+.lvls { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; margin-top: 10px; }
+.lvls > div { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; }
+.lvls .k { font-size: 11px; color: var(--muted); } .lvls .v { font-weight: 700; }
+.chip { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 7px; border: 1px dashed currentColor; }
+.chip.buy { color: var(--up); } .chip.sell { color: var(--down); }
+/* no signal: calm radar sweep */
+.banner.none .ic { background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+.banner.none .ic::before { content: ""; position: absolute; inset: 3px; border-radius: 50%; z-index: 1;
+  background: conic-gradient(from 0deg, transparent 0 290deg, color-mix(in srgb, var(--accent) 55%, transparent) 360deg); animation: spin 2.6s linear infinite; }
+.banner.none .title { color: var(--text-2); }
+.banner.forming { border-style: dashed; border-color: var(--warn); }
+.banner .warnline { color: var(--warn); font-size: 12px; margin-top: 6px; animation: blink 1.6s ease-in-out infinite; }
+/* signal: pop-in, glow and ripples */
+.banner.buy, .banner.sell { animation: pop .55s cubic-bezier(.2,1.5,.4,1) both, var(--glow) 2.2s ease-in-out .6s infinite; }
+.banner.buy { --glow: glowB; border-color: var(--up); background: linear-gradient(100deg, var(--up-soft), transparent 55%), var(--surface); }
+.banner.sell { --glow: glowS; border-color: var(--down); background: linear-gradient(100deg, var(--down-soft), transparent 55%), var(--surface); }
+.banner.buy .ic { background: var(--up); color: #fff; } .banner.sell .ic { background: var(--down); color: #fff; }
+.banner.buy .title { color: var(--up); } .banner.sell .title { color: var(--down); }
+.banner.buy .ic::before, .banner.buy .ic::after, .banner.sell .ic::before, .banner.sell .ic::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid currentColor; animation: ripple 1.8s ease-out infinite; }
+.banner.buy .ic::before, .banner.buy .ic::after { color: var(--up); } .banner.sell .ic::before, .banner.sell .ic::after { color: var(--down); }
+.banner .ic::after { animation-delay: .9s !important; }
+.banner.pos { border-color: var(--accent); background: linear-gradient(100deg, var(--accent-soft), transparent 55%), var(--surface); }
+.banner.pos .ic { background: var(--accent); color: #fff; } .banner.pos .title { color: var(--accent); }
+.demo-pill { background: var(--warn); color: #000; border-color: transparent; }
+.tile.pulse-buy { animation: glowB 2.2s ease-in-out infinite; } .tile.pulse-sell { animation: glowS 2.2s ease-in-out infinite; }
+.tile.forming { border-style: dashed; border-color: var(--warn); }
+.preview { animation: blink 1.6s ease-in-out infinite; }
+.tile .lv3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; font-size: 12px; }
+.tile .lv3 span { color: var(--muted); display: block; font-size: 11px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pop { from { opacity: 0; transform: scale(.96) translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes ripple { from { transform: scale(1); opacity: .7; } to { transform: scale(1.7); opacity: 0; } }
+@keyframes blink { 50% { opacity: .45; } }
 @media (max-width: 1100px) { .main { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 760px) {
   .matrix { grid-template-columns: minmax(0, 1fr); } .mh { display: none; } .msym { margin-top: 8px; flex-direction: row; gap: 8px; align-items: baseline; }
@@ -231,11 +276,13 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
   <span class="sub" id="subline"></span>
   <span class="spacer"></span>
   <span class="sub">Read-only · places no orders · times in IST</span>
+  <button class="iconbtn" id="alertBtn" title="Desktop alerts for new signals" aria-label="Desktop alerts">🔕</button>
   <button class="iconbtn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
 </div></div>
 
 <div class="wrap">
   <div class="tickers" id="tickers"></div>
+  <div class="banners" id="banners"></div>
 
   <div class="main">
     <div class="panel" style="--i:1">
@@ -508,14 +555,14 @@ function renderMatrix() {
       if (!c) { h += `<div class="tile">–</div>`; continue; }
       const s = c.signal, kind = s ? s.side : "wait", lo = c.rsi_level, hi = 100 - lo;
       const prog = Math.min(100, Math.max(0, (Date.now() / 1000 - (c.next_close - c.period)) / c.period * 100));
-      h += `<div class="tile ${s ? s.side : ""} ${c.trading ? "traded" : ""} ${sym === S.sym && tf === S.tf ? "sel" : ""}" data-s="${sym}" data-t="${tf}">
-        <div class="t1"><span class="tag ${kind}">${s ? (s.side === "buy" ? "▲ BUY" : "▼ SELL") : "WAIT"}</span>
+      h += `<div class="tile ${s ? s.side + " pulse-" + s.side : ""} ${!s && c.preview ? "forming" : ""} ${c.trading ? "traded" : ""} ${sym === S.sym && tf === S.tf ? "sel" : ""}" data-s="${sym}" data-t="${tf}">
+        <div class="t1"><span class="tag ${kind}">${s ? (s.side === "buy" ? "▲ BUY SIGNAL" : "▼ SELL SIGNAL") : "NO SIGNAL"}</span>
           <span class="trend ${c.trend}">${c.trend === "UP" ? "↗ Uptrend" : c.trend === "DOWN" ? "↘ Downtrend" : "↔ Mixed"}</span></div>
         <div class="meter" title="RSI ${c.rsi}"><span class="zone" style="left:0;width:${lo}%;background:var(--up-soft)"></span>
           <span class="zone" style="left:${hi}%;width:${100 - hi}%;background:var(--down-soft)"></span><span class="needle" style="left:${c.rsi}%"></span></div>
         <div class="mrow"><span>RSI <b class="mono">${fmt(c.rsi, 1)}</b>${c.rsi_live !== null ? ` · live <b class="mono">${fmt(c.rsi_live, 1)}</b>` : ""}</span><span>closes in <b class="mono" data-close="${c.next_close}">${left(c.next_close)}</b></span></div>
-        ${s ? `<div class="mrow" style="margin-top:6px"><span>SL <b class="mono neg-t">${px(s.sl)}</b></span><span>TP <b class="mono pos-t">${px(s.tp)}</b></span></div>` : ""}
-        ${!s && c.preview ? `<div class="preview">● Forming: ${c.preview.side.toUpperCase()} if the candle closed now</div>` : ""}
+        ${s ? `<div class="lv3"><div><span>Entry</span><b class="mono">${px(s.entry)}</b></div><div><span>Stop loss</span><b class="mono neg-t">${px(s.sl)}</b></div><div><span>Target</span><b class="mono pos-t">${px(s.tp)}</b></div></div>` : ""}
+        ${!s && c.preview ? `<div class="preview">● Possible ${c.preview.side.toUpperCase()} forming. Confirmed only if the candle closes like this</div>` : ""}
         <div class="prog"><i data-prog="${c.next_close}" data-per="${c.period}" style="width:${prog}%"></i></div>
         <div class="note ${c.tested.ok ? "ok" : ""}">${esc(c.tested.text)}</div></div>`;
     }
@@ -546,7 +593,7 @@ function renderSide() {
     const top = isBuy ? L.tp : L.sl, bot = isBuy ? L.sl : L.tp;
     const pct = v => (v === null || v === undefined || top === bot) ? 50 : Math.min(100, Math.max(0, (top - v) / (top - bot) * 100));
     const pnl = pos ? livePnl(pos) : null;
-    html = `<div class="status"><span class="badge-big ${pos ? "pos" : side} ${pos ? "" : "glow-" + side}">${pos ? "IN TRADE" : (isBuy ? "▲ BUY" : "▼ SELL")}</span>
+    html = `<div class="status"><span class="badge-big ${pos ? "pos" : side} ${pos ? "" : "glow-" + side}">${pos ? "IN TRADE" : (isBuy ? "▲ BUY SIGNAL" : "▼ SELL SIGNAL")}</span>
       <div><div style="font-weight:600">${S.sym} · ${S.tf}</div><div class="sub">${pos ? esc(pos.source) + " · " + side.toUpperCase() + " " + pos.size : "Signal on the last closed candle"}</div></div></div>
       <div class="ladder"><div class="track ${isBuy ? "" : "sell"}">
         <span class="mk" style="top:${pct(L.entry)}%"></span><span class="mk now" style="top:${pct(now)}%" title="Current price"></span></div>
@@ -564,7 +611,7 @@ function renderSide() {
       </div>
       <p>${pos ? "Delta will close this trade at the stop loss or target automatically." : esc(s.reason) + (s.size < 1 ? " · Capital too small: the bot will skip this trade." : "")}</p>`;
   } else {
-    html = `<div class="status"><span class="badge-big wait">WAIT</span>
+    html = `<div class="status"><span class="badge-big wait">NO SIGNAL</span>
       <div><div style="font-weight:600">${S.sym} · ${S.tf}</div><div class="sub">No signal on the last closed candle</div></div></div>
       <p>${esc(c.rules.find(r => r.state !== "pass")?.text || "Watching the market.")}</p>
       ${c.preview ? `<p style="color:var(--warn)">● Forming candle: it would be a <b>${c.preview.side.toUpperCase()}</b> if it closed now. Only a <b>closed</b> candle counts.</p>` : ""}
@@ -572,7 +619,7 @@ function renderSide() {
         <div><div class="k">RSI</div><div class="v mono">${fmt(c.rsi, 1)}</div></div><div><div class="k">ATR</div><div class="v mono">${px(c.atr)}</div></div></div>`;
   }
   $("ticket").innerHTML = html;
-  $("ruleCtx").textContent = `${S.sym} · ${S.tf} · last closed ${ist(c.last_closed)}`;
+  $("ruleCtx").textContent = `${S.sym} · ${S.tf} · candle closed ${ist(c.last_closed + c.period)} IST`;
   const icon = { pass: "✓", wait: "…", fail: "✕", idle: "–" };
   $("steps").innerHTML = c.rules.map((r, i) => `<li style="--i:${i}"><span class="ico ${r.state}">${icon[r.state]}</span><div><b>${esc(r.name)}</b><span>${esc(r.text)}</span></div></li>`).join("");
   renderRing(c);
@@ -635,7 +682,7 @@ function renderTable() {
     h = !d.live.enabled ? `<tbody><tr><td class="empty">Add API keys to .env to see your Delta orders.</td></tr></tbody>` :
       orders.length ? `<thead><tr><th>Coin</th><th>Side</th><th>Size</th><th>Type</th><th>Price</th><th>State</th></tr></thead><tbody>` +
       orders.map(o => `<tr><td><b>${esc(o.symbol)}</b></td><td class="${o.side === "buy" ? "pos-t" : "neg-t"}">${esc(String(o.side).toUpperCase())}</td><td class="mono">${esc(o.size)}</td>
-        <td>${esc(String(o.type).replace(/_/g, " "))}</td><td class="mono">${px(o.price)}</td><td>${esc(o.state)}</td></tr>`).join("") + "</tbody>"
+        <td>${esc(/stop_loss/.test(o.type) ? "Stop loss" : /take_profit/.test(o.type) ? "Take profit (target)" : String(o.type).replace(/_/g, " "))}</td><td class="mono">${px(o.price)}</td><td>${esc(o.state)}</td></tr>`).join("") + "</tbody>"
       : `<tbody><tr><td class="empty">No open orders on Delta.</td></tr></tbody>`;
   }
   $("tbl").innerHTML = h;
@@ -646,26 +693,119 @@ function renderTable() {
 $("tblTabs").querySelectorAll("button").forEach(b => b.onclick = () => {
   S.tab = b.dataset.t; $("tblTabs").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); renderTable(); });
 
+/* ---------- signal banners (one per coin, on the timeframe the bot trades) ---------- */
+const DEMO = new URLSearchParams(location.search).has("demo");
+function injectDemo(d) {
+  const sym = d.symbols[d.symbols.length - 1], c = d.cards.find(x => x.symbol === sym && x.tf === d.resolution);
+  if (!c || c.signal) return;
+  const e = c.close, dist = c.atr * d.atr_mult;
+  c.signal = { side: "buy", entry: e, sl: +(e - dist).toFixed(2), tp: +(e + dist * d.rr).toFixed(2), size: 4,
+    risk: +(dist * 4 * 0.01).toFixed(2), reward: +(dist * d.rr * 4 * 0.01).toFixed(2), reason: "DEMO: example of how a real signal looks (not a real signal)" };
+  c.rules = c.rules.map(r => ({ ...r, state: "pass" }));
+}
+function bannerKey(sym) {
+  const c = cardOf(sym, S.ov.resolution) || {}, pos = posFor(sym, S.ov.resolution);
+  return JSON.stringify([sym, c.signal, c.preview, c.rsi_live, c.trend, c.rules && c.rules.map(r => r.text), pos && [pos.entry, pos.sl, pos.tp], S.ov.mode]);
+}
+function posFor(sym, tf) { return allPositions().find(p => p.symbol === sym && (p.source === "Delta account" || p.tf === tf)); }
+function renderBanners() {
+  const d = S.ov, tf = d.resolution, box = $("banners");
+  d.symbols.forEach((sym, i) => {
+    let el = box.querySelector(`[data-b="${sym}"]`);
+    if (!el) { el = document.createElement("div"); el.dataset.b = sym; el.style.setProperty("--i", i); box.appendChild(el);
+      el.onclick = () => select(sym, tf); }
+    const key = bannerKey(sym);
+    if (el.dataset.key === key) return;                      // unchanged: keep animations running smoothly
+    el.dataset.key = key;
+    const c = cardOf(sym, tf); if (!c) { el.className = "panel banner none"; el.innerHTML = ""; return; }
+    const s = c.signal, pos = posFor(sym, tf), coin = sym.replace("USD", "");
+    const others = TFS.filter(t => t !== tf).map(t => cardOf(sym, t)).filter(x => x && x.signal)
+      .map(x => `<span class="chip ${x.signal.side}">${x.tf}: ${x.signal.side.toUpperCase()} (watch only)</span>`).join("");
+    const next = `Next check in <b class="mono" data-close="${c.next_close}">${left(c.next_close)}</b>`;
+    if (s) {
+      const buy = s.side === "buy", act = d.mode === "LIVE" ? "The bot is placing this order with SL + TP attached." : "Paper mode: the bot simulates this trade (no real order).";
+      el.className = `panel banner ${s.side}`;
+      el.innerHTML = `<div class="ic"><span>${buy ? "▲" : "▼"}</span></div><div>
+        <div class="kicker">${coin} · ${sym} · ${tf} · signal on the last closed candle</div>
+        <div class="title">${buy ? "BUY SIGNAL" : "SELL SIGNAL"}</div>
+        <div class="why">${esc(s.reason)}</div>
+        <div class="lvls"><div><div class="k">Entry ~</div><div class="v mono">${px(s.entry)}</div></div>
+          <div><div class="k">Stop loss</div><div class="v mono neg-t">${px(s.sl)}</div></div>
+          <div><div class="k">Target</div><div class="v mono pos-t">${px(s.tp)}</div></div>
+          <div><div class="k">Size</div><div class="v mono">${s.size} ct</div></div>
+          <div><div class="k">Risk → reward</div><div class="v mono">$${fmt(s.risk)} → $${fmt(s.reward)}</div></div></div>
+        <div class="foot"><span>${pos ? `⚠ Ignored: ${coin} already has an open position (${esc(pos.source)}).` : s.size < 1 ? "⚠ Capital too small for this stop: the bot will SKIP it." : act}</span>${others}</div></div>`;
+    } else if (pos) {
+      el.className = "panel banner pos";
+      el.innerHTML = `<div class="ic"><span>●</span></div><div>
+        <div class="kicker">${coin} · ${sym} · ${esc(pos.source)}</div>
+        <div class="title">IN TRADE · ${pos.side.toUpperCase()} ${pos.size}</div>
+        <div class="why">No new signals are taken on ${coin} while this position is open.</div>
+        <div class="lvls"><div><div class="k">Entry</div><div class="v mono">${px(pos.entry)}</div></div>
+          <div><div class="k">Stop loss</div><div class="v mono neg-t">${px(pos.sl)}</div></div>
+          <div><div class="k">Target</div><div class="v mono pos-t">${px(pos.tp)}</div></div>
+          <div><div class="k">Live P&L</div><div class="v mono" data-pnl="${sym}">–</div></div></div>
+        <div class="foot"><span>${next}</span>${others}</div></div>`;
+    } else {
+      const waiting = (c.rules.find(r => r.state !== "pass") || {}).text || "Watching the market.";
+      el.className = `panel banner none ${c.preview ? "forming" : ""}`;
+      el.innerHTML = `<div class="ic"><span>${coin === "BTC" ? "₿" : "Ξ"}</span></div><div>
+        <div class="kicker">${coin} · ${sym} · ${tf} · ${c.trend === "UP" ? "↗ uptrend" : c.trend === "DOWN" ? "↘ downtrend" : "↔ no clear trend"}</div>
+        <div class="title">NO SIGNAL</div>
+        <div class="why">${esc(waiting)}</div>
+        ${c.preview ? `<div class="warnline">● Possible ${c.preview.side.toUpperCase()} forming. It only counts if the candle closes like this.</div>` : ""}
+        <div class="foot"><span>${next}</span><span>RSI <b class="mono">${fmt(c.rsi, 1)}</b> · live <b class="mono">${fmt(c.rsi_live, 1)}</b></span>${others}</div></div>`;
+    }
+  });
+  updateBannerPnl();
+}
+function updateBannerPnl() {
+  document.querySelectorAll("[data-pnl]").forEach(e => { const p = posFor(e.dataset.pnl, S.ov.resolution); const v = p ? livePnl(p) : null;
+    e.textContent = v === null ? "–" : money(v); e.className = "v mono " + ((v || 0) >= 0 ? "pos-t" : "neg-t"); });
+}
+
+/* ---------- alerts for NEW signals: toast + tab title + optional desktop notification ---------- */
+let titleTimer = null;
+function announce(c, d) {
+  const s = c.signal, head = `${s.side === "buy" ? "▲ BUY" : "▼ SELL"} SIGNAL · ${c.symbol} · ${c.tf}`;
+  const body = `Entry ~${px(s.entry)} · SL ${px(s.sl)} · TP ${px(s.tp)}${c.tf === d.resolution ? "" : " (watch-only timeframe)"}`;
+  toast(head, body, s.side);
+  clearInterval(titleTimer); let on = false, n = 0;
+  titleTimer = setInterval(() => { document.title = (on = !on) ? "🔔 " + head : "Delta Bot Terminal"; if (++n > 40) { clearInterval(titleTimer); document.title = "Delta Bot Terminal"; } }, 1000);
+  if (storeGet("alerts") === "on" && "Notification" in window && Notification.permission === "granted") new Notification(head, { body });
+}
+function paintAlertBtn() { $("alertBtn").textContent = storeGet("alerts") === "on" ? "🔔" : "🔕"; }
+$("alertBtn").onclick = async () => {
+  if (storeGet("alerts") === "on") { storeSet("alerts", "off"); paintAlertBtn(); toast("Alerts off", "No desktop notifications.", ""); return; }
+  if (!("Notification" in window)) { toast("Alerts", "This browser doesn't support desktop notifications.", ""); return; }
+  const perm = await Notification.requestPermission();
+  if (perm === "granted") { storeSet("alerts", "on"); toast("Alerts on", "You'll get a desktop notification when a new signal appears.", "buy"); }
+  else toast("Alerts blocked", "Allow notifications for localhost in your browser settings.", "");
+  paintAlertBtn();
+};
+paintAlertBtn();
+window.addEventListener("focus", () => { clearInterval(titleTimer); document.title = "Delta Bot Terminal"; });
+
 /* ---------- data loops ---------- */
 async function pullOverview() {
   try {
     const d = await (await fetch("/api/overview")).json();
     if (d.error) throw new Error(d.error);
-    for (const c of d.cards) {                               // toast on NEW signals
+    if (DEMO) injectDemo(d);
+    for (const c of d.cards) {                               // alert on NEW signals
       const key = c.symbol + c.tf, sig = c.signal ? c.signal.side + c.last_closed : "";
-      if (!S.first && sig && S.lastSig[key] !== sig)
-        toast(`${c.signal.side === "buy" ? "▲ BUY" : "▼ SELL"} ${c.symbol} · ${c.tf}`, `Entry ~${px(c.signal.entry)} · SL ${px(c.signal.sl)} · TP ${px(c.signal.tp)}`, c.signal.side);
+      if (!S.first && sig && S.lastSig[key] !== sig) announce(c, d);
       S.lastSig[key] = sig;
     }
     S.ov = d;
     const live = d.mode === "LIVE";
-    $("modePill").className = "pill" + (live ? " live" : ""); $("modePill").textContent = live ? "● LIVE TRADING" : "PAPER MODE";
+    $("modePill").className = "pill" + (live ? " live" : "") + (DEMO ? " demo-pill" : ""); $("modePill").textContent = (DEMO ? "DEMO · " : "") + (live ? "● LIVE TRADING" : "PAPER MODE");
     $("subline").textContent = `${d.strategy} strategy · trades ${d.resolution} · ${d.symbols.join(", ")} · ${d.env}`;
     document.querySelectorAll(".rsiLo").forEach(e => e.textContent = d.rsi_level);
     document.querySelectorAll(".rsiHi").forEach(e => e.textContent = 100 - d.rsi_level);
     $("rsiLv").textContent = `${d.rsi_level} / ${100 - d.rsi_level}`; $("hAtr").textContent = d.atr_mult; $("hRr").textContent = d.rr;
     if (!S.sym) { S.sym = d.symbols[0]; S.tf = d.resolution; buildTf(); buildRange(); loadChart(true); }
-    renderTickers(); renderMatrix(); renderSide(); renderKpis(); renderTable();
+    renderTickers(); renderBanners(); renderMatrix(); renderSide(); renderKpis(); renderTable();
     S.first = false;
   } catch (e) { toast("Dashboard", "Could not load signals: " + e.message, ""); }
 }
@@ -681,7 +821,7 @@ async function pullLive() {
       if (t > S.chartLast) loadChart(false);                 // a new candle started: reload history
       else if (t === S.chartLast) candleS.update({ time: t, open: f.open, high: f.high, low: f.low, close: f.close });
     }
-    if (S.ov) { renderSide(); if (S.tab === "open") renderTable(); }
+    if (S.ov) { renderSide(); updateBannerPnl(); if (S.tab === "open") renderTable(); }
   } catch (e) { /* connection pill shows the state */ }
 }
 function tick() {

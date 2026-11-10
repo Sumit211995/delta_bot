@@ -97,8 +97,11 @@ class DeltaClient:
         return float(self.get_position(product_id).get("size", 0) or 0)
 
     def get_open_orders(self, product_id):
-        return self.request("GET", "/v2/orders", params={"product_id": product_id,
-                            "states": "open,pending"}, auth=True)["result"]
+        # Delta ignores `product_id` here (returns ALL coins' orders); `product_ids` filters correctly.
+        # Filter again client-side so another coin's orders can never be mistaken for this one's.
+        res = self.request("GET", "/v2/orders", params={"product_ids": product_id,
+                           "states": "open,pending"}, auth=True)["result"]
+        return [o for o in res if int(o.get("product_id", -1)) == int(product_id)]
 
     def set_leverage(self, product_id, leverage):
         return self.request("POST", f"/v2/products/{product_id}/orders/leverage",

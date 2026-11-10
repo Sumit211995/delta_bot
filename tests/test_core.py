@@ -133,3 +133,15 @@ def test_vectorized_signals_match_signal_at():
         v = signals_vectorized(d, cfg)
         slow = [0 if (s := signal_at(d, i, cfg)) is None else (1 if s.side == "buy" else -1) for i in range(len(d))]
         assert list(v) == slow and sum(x != 0 for x in slow) > 5
+
+
+def test_open_orders_filtered_by_product():
+    from delta_client import DeltaClient
+    c = DeltaClient("http://x", "k", "s")
+    seen = {}
+    def fake(method, path, params=None, body=None, auth=False, retries=3):
+        seen.update(params)
+        return {"result": [{"id": 1, "product_id": 3136}, {"id": 2, "product_id": 27}]}   # API returns all coins
+    c.request = fake
+    assert [o["id"] for o in c.get_open_orders(27)] == [2]
+    assert seen["product_ids"] == 27

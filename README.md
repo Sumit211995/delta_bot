@@ -120,6 +120,11 @@ Delete those two files to restart a paper record from zero.
 - **Rule checklist:** the 3 rules (Trend → Pullback → Trigger) with ✓ / … / ✕, plus a countdown ring to the next candle close.
 - **Signals across timeframes:** every coin × timeframe with an RSI gauge, closing countdown, and a "forming" preview
   (what the signal *would* be if the candle closed now. Only closed candles count.)
+- **Signal banner per coin (top of the page):** a big **NO SIGNAL** card (radar sweep, what it is waiting for, countdown to the next check),
+  an animated **BUY / SELL SIGNAL** card (pop-in, glow, entry / stop loss / target / size / risk → reward), or **IN TRADE** with live P&L.
+  A dashed amber border means a signal *might* be forming; it only counts when the candle closes.
+  Open **http://localhost:8000/?demo** to see what a signal looks like (example only, nothing is traded).
+- **Alerts:** a new signal shows a pop-up, flashes the browser tab title, and (after clicking 🔕 → 🔔) sends a desktop notification.
 - **Account & risk, Open trades / History / Delta orders** tabs, a pop-up notification when a new signal appears, and a light/dark toggle (◐).
 
 ## 3. Get your Delta Exchange API key
