@@ -1,8 +1,13 @@
 # Delta Exchange India Trading Bot
 
-A personal trading bot for **Delta Exchange India** perpetual futures (BTCUSD, ETHUSD). Every trade is sent as a
+A personal trading bot for **Delta Exchange India** perpetual futures (BTCUSD, ETHUSD, SOLUSD). Every trade is sent as a
 **bracket order**, with the **stop loss and target stored on the exchange**. If your computer or the bot crashes,
 the stop loss still works.
+
+> 📘 **Full guide:** [docs/GUIDE.md](docs/GUIDE.md) · PDF: [docs/Delta_Bot_Guide.pdf](docs/Delta_Bot_Guide.pdf). It covers how the bot
+> works, how it was built, the tools used, why Python, test results, and step-by-step deployment.
+>
+> **Current mode: paper trading only** (`DRY_RUN=1`). 4h, 1h and 30m are all paper-traded and shown in the dashboard journal.
 
 > **Reality check.** This is not a money machine. The backtest shows a **small** edge, and it wins only about **30% of
 > trades**. It makes money because winners are 3× the size of losers. Runs of 8–10 losses in a row are normal.
@@ -184,42 +189,69 @@ If the bot halts, read `halt_reason` with `python bot.py --status`. Delete `stat
 ## 6. Deploy for free (24/7)
 
 The bot needs **a machine that is always on, with a fixed public IP** (for Delta's IP whitelist), and **persistent disk**
-for `state/`. It uses about 100 MB of RAM.
+for `state/` and `logs/`. Both containers together use about 150 MB of RAM. **Deploy in paper mode (`DRY_RUN=1`) first.**
+The complete walkthrough with explanations is in [docs/GUIDE.md § 16](docs/GUIDE.md).
 
 | Option | Cost | Fixed IP | Verdict |
 |---|---|---|---|
-| **Oracle Cloud Always Free VM** (Mumbai/Hyderabad region) | Free forever | Yes | **Recommended** |
-| Your own laptop/PC | Free | Home IP (may change) | OK for testing; must stay awake (`caffeinate -i python bot.py` on Mac) |
-| Google Cloud e2-micro free tier | Free (US regions) | Check current IPv4 pricing | OK alternative |
-| Railway / Render / Fly | Not free for always-on workers (~$5/month) | Not on cheap plans | Not ideal |
+| **Oracle Cloud Always Free VM** (Mumbai/Hyderabad region) | Free | Yes | **Recommended** |
+| Your own laptop/PC | Free | Home/mobile IP changes | OK for paper testing; must stay awake (`caffeinate -i python bot.py`) |
+| Paid VPS (AWS Lightsail Mumbai, DigitalOcean Bangalore…) | ~$4–6/month | Yes | Good if Oracle signup fails |
+| Railway / Render / Fly | ~$5+/month | Not on cheap plans | Not suitable |
 
 ### Oracle Cloud Free: step by step
-1. Sign up at **cloud.oracle.com** (needs a card for verification; Always Free resources are not charged). Choose home region **India West (Mumbai)** or **India South (Hyderabad)**.
-2. **Create a VM instance:** image **Ubuntu 22.04**, shape **VM.Standard.E2.1.Micro** or **Ampere A1** (both "Always Free eligible").
-   Download the SSH key. Note the **public IP**.
-3. In Delta, **whitelist that public IP** on your API key.
-4. Connect and install:
+1. **Push the code first** (on your Mac): `git push -u origin main`. `.env` is git-ignored and is copied separately in step 6.
+2. **Account:** sign up at **cloud.oracle.com** (a card is needed for verification; Always Free resources are not charged).
+   Home region **India West (Mumbai)** or **India South (Hyderabad)**. It can't be changed later.
+3. **VM:** *Compute → Instances → Create instance* → image **Ubuntu 22.04/24.04**, shape **VM.Standard.E2.1.Micro** or
+   **VM.Standard.A1.Flex** (both "Always Free eligible"; if Ampere is "out of capacity", use E2.1.Micro). Assign a public IPv4,
+   **generate and download the SSH key**, create, and copy the **public IP**. Optional: make it a **reserved** IP so it never changes.
+4. **Delta:** whitelist the server IP on your API key (**Read Data + Trading only, never Withdrawal**).
+5. **Install** (from your Mac):
    ```bash
-   ssh -i your-key.pem ubuntu@<PUBLIC_IP>
-   sudo apt update && sudo apt install -y docker.io docker-compose-v2 git
-   sudo usermod -aG docker ubuntu && exit           # log in again after this
-   ssh -i your-key.pem ubuntu@<PUBLIC_IP>
-   git clone https://github.com/Sumit211995/delta_bot.git && cd delta_bot
-   cp .env.example .env && nano .env                 # paste keys, set DRY_RUN etc.
-   docker compose up -d --build                      # starts the bot, restarts automatically
+   chmod 400 ~/Downloads/oracle.key
+   ssh -i ~/Downloads/oracle.key ubuntu@<SERVER_IP>
+   sudo apt update && sudo apt -y upgrade
+   sudo apt install -y docker.io docker-compose-v2 git chrony     # chrony keeps the clock exact (API signatures)
+   sudo systemctl enable --now docker chrony
+   sudo usermod -aG docker ubuntu && exit                          # log in again after this
+   ssh -i ~/Downloads/oracle.key ubuntu@<SERVER_IP>
+   git clone https://github.com/Sumit211995/delta_bot.git && cd delta_bot && mkdir -p state logs
+   ```
+6. **Copy your `.env`** (run on your **Mac**), then lock it down on the server:
+   ```bash
+   scp -i ~/Downloads/oracle.key ~/Documents/Project/delta_bot/.env ubuntu@<SERVER_IP>:~/delta_bot/.env
+   # on the server:
+   chmod 600 ~/delta_bot/.env && grep DRY_RUN ~/delta_bot/.env      # must show DRY_RUN=1 (paper)
+   ```
+7. **Start** (on the server):
+   ```bash
+   cd ~/delta_bot
+   docker compose up -d --build                      # bot + dashboard; auto-restart on crash/reboot
+   docker compose ps                                 # both "running"
+   docker compose exec delta-bot python bot.py --check   # connection + wallet, no orders
    docker compose logs -f delta-bot                  # watch it (Ctrl+C only stops watching)
    ```
-5. Useful commands on the server:
-   ```bash
-   docker compose exec delta-bot python bot.py --status
-   docker compose exec delta-bot python bot.py --panic
-   git pull && docker compose up -d --build          # update to the latest code
-   docker compose down                               # stop the bot (positions keep SL/TP)
-   ```
-**Dashboard on the server:** it is started too, but only reachable from the server itself (safer). From your laptop run
-`ssh -i your-key.pem -L 8000:localhost:8000 ubuntu@<PUBLIC_IP>` and open http://localhost:8000.
+   You should get **"Bot started … PAPER 4h … also paper-trading 30m,1h"** on Telegram.
+8. **Stop the laptop bot.** Only one bot should run per Delta account.
 
+**Dashboard on the server:** it listens only on the server itself (safer). From your Mac run
+`ssh -i ~/Downloads/oracle.key -N -L 8000:localhost:8000 ubuntu@<SERVER_IP>` and open http://localhost:8000.
+**Never open port 8000** in Oracle's firewall.
+
+**Day-to-day on the server** (in `~/delta_bot`):
+```bash
+docker compose exec delta-bot python bot.py --status    # paper results, all timeframes
+git pull && docker compose up -d --build                # update to the latest code
+docker compose restart                                  # restart
+docker compose down                                     # stop (live positions keep their SL/TP on Delta)
+scp -i ~/Downloads/oracle.key -r ubuntu@<SERVER_IP>:~/delta_bot/{state,logs} ~/delta_backup/   # backup (from Mac)
+```
 `state/` and `logs/` live on the VM's disk (mounted by `docker-compose.yml`), so they survive restarts and updates.
+
+**Deploy checklist:** code pushed · `.env` not in Git · VM in Mumbai/Hyderabad · server IP whitelisted (no Withdrawal) ·
+Docker + chrony installed · `.env` copied, `chmod 600`, `DRY_RUN=1` · `docker compose up -d --build` · `--check` OK ·
+Telegram "Bot started" received · dashboard opens through the SSH tunnel · laptop bot stopped.
 
 ---
 
@@ -274,6 +306,7 @@ Fees plus 18% GST on fees reduce the edge of frequent trading. That's one reason
 Ask a CA how crypto-derivative P&L is taxed for you, and export your trade history from Delta regularly.
 
 ## Files
+
 | File | Purpose |
 |---|---|
 | `bot.py` | live/paper loop, `--check`, `--once`, `--status`, `--panic` |
@@ -285,4 +318,5 @@ Ask a CA how crypto-derivative P&L is taxed for you, and export your trade histo
 | `notifier.py` | Telegram alerts |
 | `dashboard.py`, `dashboard.html` | read-only web dashboard |
 | `Dockerfile`, `docker-compose.yml` | deployment |
-| `tests/` | 9 unit tests |
+| `tests/` | 12 unit tests |
+| `docs/GUIDE.md`, `docs/Delta_Bot_Guide.pdf` | complete guide (rebuild the PDF: `pip install markdown && python docs/build_pdf.py`) |

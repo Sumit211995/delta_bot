@@ -331,7 +331,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
         <span style="color:var(--down)"><span class="sw dash"></span><span style="color:var(--text-2)">Stop loss</span></span>
         <span style="color:var(--up)"><span class="sw dash"></span><span style="color:var(--text-2)">Target</span></span>
         <span style="color:var(--neutral)"><span class="sw dash"></span><span style="color:var(--text-2)">Entry</span></span>
-        <span>▲ BUY · ▼ SELL past signals</span>
+        <span><b class="pos-t">▲ B</b> = buy signal · <b class="neg-t">▼ S</b> = sell signal</span>
         <span class="live-tag"><span class="dot ok"></span>last candle updates live</span>
       </div>
       <div id="ohlc" class="mono"></div>
@@ -558,7 +558,7 @@ async function loadChart(showSkeleton) {
     S.chartLast = candles.length ? candles[candles.length - 1].time : 0;
     S.chartInfo = `${S.sym} · ${S.tf} · ${S.range}: ${d.n.toLocaleString()} candles since ${d.first ? new Date((d.first + IST) * 1000).toISOString().slice(0, 10) : "–"} · ${d.markers.length} past signals · scroll or pinch to zoom`;
     candleS.setMarkers(d.markers.map(m => ({ time: m.time + IST, position: m.side === "buy" ? "belowBar" : "aboveBar",
-      color: m.side === "buy" ? css("--up") : css("--down"), shape: m.side === "buy" ? "arrowUp" : "arrowDown", text: d.markers.length <= 40 ? m.side.toUpperCase() : "" })));
+      color: m.side === "buy" ? css("--up") : css("--down"), shape: m.side === "buy" ? "arrowUp" : "arrowDown", text: m.side === "buy" ? "B" : "S" })));
     priceLines.forEach(([s, l]) => s.removePriceLine(l)); priceLines = [];
     for (const L of d.lines) for (const [k, c, n] of [["entry", "--neutral", "Entry"], ["sl", "--down", "SL"], ["tp", "--up", "TP"]])
       if (L[k] !== null && L[k] !== undefined) priceLines.push([candleS, candleS.createPriceLine({ price: L[k], color: css(c), lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: `${L.label} ${n}` })]);
