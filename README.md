@@ -110,14 +110,17 @@ In testing, **only 4h made money after fees**. 30m and 1h lost money (0 of 91 va
 Paper records are kept per timeframe in `state/paper_state_<tf>.json` and `logs/paper_trades_<tf>.csv`.
 Delete those two files to restart a paper record from zero.
 
-### The dashboard
+### The dashboard (live trading screen)
 `python dashboard.py` and then open **http://localhost:8000**. It is **read-only** and never places or cancels orders.
-- **Signals now:** a card for every coin × timeframe (30m / 1h / 4h). Each shows BUY / SELL / WAIT, trend, RSI, and in plain words what the
-  bot is waiting for. When there's a signal, it shows **Entry, Stop loss, Target, size, and money at risk vs reward**. The orange border marks the
-  timeframe the bot actually trades.
-- **Chart:** candles, EMA 50 and EMA 200, past BUY/SELL signals, and dashed **Entry / SL / TP lines** for open trades and new signals, plus RSI below.
-- **Open trades:** paper trades and your real Delta position (with its SL/TP), with live unrealised P&L.
-- **Recent trades:** entries and exits with P&L.
+- **Live prices:** BTC/ETH mark price, 24h change, high/low, funding and volume. Updated **every 2 seconds**, with a green/red flash and a mini sparkline.
+- **Chart:** click **30m / 1h / 4h** (★ = the timeframe the bot trades). Candles, EMA 50/200, past BUY/SELL signals, dashed
+  **Entry / SL / TP** lines, RSI below. **The last candle moves live** while it forms.
+- **Signal ticket:** BUY / SELL / WAIT / IN TRADE for the selected coin and timeframe, with a visual ladder (target, entry, live price, stop loss),
+  size, money at risk vs reward, and live P&L when a trade is open.
+- **Rule checklist:** the 3 rules (Trend → Pullback → Trigger) with ✓ / … / ✕, plus a countdown ring to the next candle close.
+- **Signals across timeframes:** every coin × timeframe with an RSI gauge, closing countdown, and a "forming" preview
+  (what the signal *would* be if the candle closed now. Only closed candles count.)
+- **Account & risk, Open trades / History / Delta orders** tabs, a pop-up notification when a new signal appears, and a light/dark toggle (◐).
 
 ## 3. Get your Delta Exchange API key
 

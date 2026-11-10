@@ -1,10 +1,13 @@
-"""Local web dashboard: live signals (30m / 1h / 4h), stop loss & target levels, chart, open trades, history.
+"""Local web dashboard: live prices, live forming candle, signals (30m / 1h / 4h), stop loss & target levels,
+rule checklist, open trades and history.
 
   python dashboard.py              # then open http://localhost:8000
   python dashboard.py --port 8080
 
 Read-only: it NEVER places or cancels orders. It binds to 127.0.0.1 (only your computer can open it).
 On a server, view it through an SSH tunnel:  ssh -L 8000:localhost:8000 ubuntu@<SERVER_IP>
+
+Endpoints: /api/overview (every 10 s), /api/live (every 2 s: tickers + forming candle), /api/chart (on demand).
 """
 import warnings
 
@@ -17,6 +20,7 @@ import math
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -30,9 +34,9 @@ from risk import RiskManager
 from strategy import add_indicators, levels, signal_at
 
 TIMEFRAMES = ["30m", "1h", "4h"]
-TESTED = {"4h": "Backtest: profitable (BTC PF 1.17, ETH PF 1.23)",
-          "1h": "Backtest: loses after fees (watch only)",
-          "30m": "Backtest: loses after fees (watch only)"}
+TESTED = {"4h": dict(ok=True, text="Backtest profitable · BTC PF 1.17 · ETH PF 1.23"),
+          "1h": dict(ok=False, text="Backtest loses after fees · watch only"),
+          "30m": dict(ok=False, text="Backtest loses after fees · watch only")}
 HERE = Path(__file__).resolve().parent
 
 CFG = load_config()
@@ -60,6 +64,10 @@ def num(x, nd=2):
     return None if math.isnan(x) or math.isinf(x) else round(x, nd)
 
 
+def tf_cfg(tf):
+    return dataclasses.replace(CFG, resolution=tf)
+
+
 def product(sym):
     def load():
         p = CLIENT.get_product(sym)
@@ -67,61 +75,116 @@ def product(sym):
     return cached(("product", sym), 3600, load)
 
 
+def ticker(sym):
+    def load():
+        t = CLIENT.get_ticker(sym)
+        q = t.get("quotes") or {}
+        return dict(symbol=sym, mark=num(t.get("mark_price")), last=num(t.get("close")), spot=num(t.get("spot_price")),
+                    change=num(t.get("mark_change_24h"), 3), high=num(t.get("high")), low=num(t.get("low")),
+                    funding=num(t.get("funding_rate"), 4), bid=num(q.get("best_bid")), ask=num(q.get("best_ask")),
+                    volume_usd=num(t.get("turnover_usd"), 0), oi_usd=num(t.get("oi_value_usd"), 0))
+    return cached(("ticker", sym), 1.5, load)
+
+
 def mark_price(sym):
-    return cached(("mark", sym), 10, lambda: float(CLIENT.get_ticker(sym).get("mark_price") or 0))
+    return ticker(sym)["mark"] or 0.0
 
 
-def candles(sym, tf, bars=500):
+def series(sym, tf, bars=500):
+    """Closed candles with indicators (what the bot sees) + the same data including the still-forming candle."""
     def load():
         per = RESOLUTION_SECONDS[tf]
         now = int(time.time())
         rows = CLIENT.get_candles(sym, tf, now - (bars + 5) * per, now)
-        df = pd.DataFrame(rows)[["time", "open", "high", "low", "close", "volume"]].astype(float)
-        df = df[df["time"] + per <= now].reset_index(drop=True)   # closed candles only (same as the bot)
-        return add_indicators(df, dataclasses.replace(CFG, resolution=tf))
-    return cached(("candles", sym, tf), 30, load)
+        raw = pd.DataFrame(rows)[["time", "open", "high", "low", "close", "volume"]].astype(float)
+        closed = raw[raw["time"] + per <= now].reset_index(drop=True)
+        return dict(closed=add_indicators(closed, tf_cfg(tf)), live=add_indicators(raw, tf_cfg(tf)))
+    return cached(("series", sym, tf), 8, load)
 
 
-def trend_and_setup(r, cfg):
+def forming(sym, tf):
+    def load():
+        per = RESOLUTION_SECONDS[tf]
+        now = int(time.time())
+        rows = CLIENT.get_candles(sym, tf, now - 3 * per, now)
+        rows = [r for r in rows if r["time"] + per > now]
+        if not rows:
+            return None
+        r = rows[-1]
+        return dict(time=int(r["time"]), open=float(r["open"]), high=float(r["high"]), low=float(r["low"]),
+                    close=float(r["close"]), closes_at=int(r["time"]) + per)
+    return cached(("forming", sym, tf), 2, load)
+
+
+def rules(r, prev, cfg, sig):
+    """Plain-language checklist of the 3 rules for the latest CLOSED candle."""
     lo, hi = cfg.rsi_pullback, 100 - cfg.rsi_pullback
-    rsi = float(r["rsi"])
-    if r["ema_slow"] > r["ema_trend"] and r["close"] > r["ema_trend"]:
-        if rsi < lo:
-            return "UP", f"Uptrend + pullback: RSI {rsi:.0f} is below {lo:g}. BUY fires if a candle closes with RSI back above {lo:g}."
-        return "UP", f"Uptrend. Waiting for a dip: RSI {rsi:.0f} must fall below {lo:g}, then close back above it."
-    if r["ema_slow"] < r["ema_trend"] and r["close"] < r["ema_trend"]:
-        if rsi > hi:
-            return "DOWN", f"Downtrend + bounce: RSI {rsi:.0f} is above {hi:g}. SELL fires if a candle closes with RSI back below {hi:g}."
-        return "DOWN", f"Downtrend. Waiting for a bounce: RSI {rsi:.0f} must rise above {hi:g}, then close back below it."
-    return "MIXED", "No clear trend (price and EMAs disagree). The bot stays out."
+    rsi, prsi = float(r["rsi"]), float(prev["rsi"])
+    up = r["ema_slow"] > r["ema_trend"] and r["close"] > r["ema_trend"]
+    dn = r["ema_slow"] < r["ema_trend"] and r["close"] < r["ema_trend"]
+    out = []
+    if up:
+        out.append(dict(name="Trend", state="pass", text="Uptrend: EMA 50 above EMA 200 and price above EMA 200. Only BUYS allowed."))
+        dipped = prsi < lo or rsi < lo
+        out.append(dict(name="Pullback", state="pass" if dipped else "wait",
+                        text=f"RSI dipped below {lo:g}." if dipped else f"Waiting for RSI to dip below {lo:g} (now {rsi:.1f})."))
+    elif dn:
+        out.append(dict(name="Trend", state="pass", text="Downtrend: EMA 50 below EMA 200 and price below EMA 200. Only SELLS allowed."))
+        dipped = prsi > hi or rsi > hi
+        out.append(dict(name="Pullback", state="pass" if dipped else "wait",
+                        text=f"RSI bounced above {hi:g}." if dipped else f"Waiting for RSI to bounce above {hi:g} (now {rsi:.1f})."))
+    else:
+        out.append(dict(name="Trend", state="fail", text="No clear trend (price and EMAs disagree). The bot stays out."))
+        out.append(dict(name="Pullback", state="idle", text="Only checked when there is a clear trend."))
+    if sig:
+        out.append(dict(name="Trigger", state="pass", text=f"{sig.side.upper()} confirmed on candle close: {sig.reason}."))
+    elif up and (prsi < lo or rsi < lo):
+        out.append(dict(name="Trigger", state="wait", text=f"BUY fires when a candle closes with RSI back above {lo:g}."))
+    elif dn and (prsi > hi or rsi > hi):
+        out.append(dict(name="Trigger", state="wait", text=f"SELL fires when a candle closes with RSI back below {hi:g}."))
+    else:
+        out.append(dict(name="Trigger", state="idle", text="Needs trend + pullback first."))
+    trend = "UP" if up else "DOWN" if dn else "MIXED"
+    return trend, out
+
+
+def plan(sym, cfg, side, atr, entry=None):
+    p = product(sym)
+    entry = entry or mark_price(sym)
+    sl, tp = levels(side, entry, atr, cfg, p["tick"])
+    size = RiskManager(cfg, path="state/dashboard_tmp.json").position_size(cfg.bot_capital_usd, entry, sl, p["cval"])
+    return dict(side=side, entry=num(entry), sl=sl, tp=tp, size=size,
+                risk=num(abs(entry - sl) * size * p["cval"]), reward=num(abs(tp - entry) * size * p["cval"]),
+                sl_pct=num(abs(entry - sl) / entry * 100), tp_pct=num(abs(tp - entry) / entry * 100))
 
 
 def card(sym, tf):
-    cfg = dataclasses.replace(CFG, resolution=tf)
-    d = candles(sym, tf)
-    r = d.iloc[-1]
+    cfg = tf_cfg(tf)
+    s = series(sym, tf)
+    d, lv = s["closed"], s["live"]
+    r, prev = d.iloc[-1], d.iloc[-2]
     per = RESOLUTION_SECONDS[tf]
-    trend, setup = trend_and_setup(r, cfg)
-    out = dict(symbol=sym, tf=tf, tested=TESTED.get(tf, ""), trading=(tf == CFG.resolution),
-               last_closed=int(r["time"]), next_close=int(r["time"]) + 2 * per,
-               close=num(r["close"]), rsi=num(r["rsi"], 1), atr=num(r["atr"]), trend=trend, setup=setup,
-               ema50=num(r["ema_slow"]), ema200=num(r["ema_trend"]), signal=None)
     sig = signal_at(d, len(d) - 1, cfg)
+    trend, checklist = rules(r, prev, cfg, sig)
+    out = dict(symbol=sym, tf=tf, tested=TESTED[tf], trading=(tf == CFG.resolution),
+               last_closed=int(r["time"]), next_close=int(r["time"]) + 2 * per, period=per,
+               close=num(r["close"]), rsi=num(r["rsi"], 1), atr=num(r["atr"]), trend=trend, rules=checklist,
+               ema50=num(r["ema_slow"]), ema200=num(r["ema_trend"]), rsi_level=cfg.rsi_pullback,
+               signal=None, preview=None, rsi_live=None)
     if sig:
-        p = product(sym)
-        entry = mark_price(sym) or float(r["close"])
-        sl, tp = levels(sig.side, entry, sig.atr, cfg, p["tick"])
-        size = RiskManager(cfg, path="state/dashboard_tmp.json").position_size(cfg.bot_capital_usd, entry, sl, p["cval"])
-        out["signal"] = dict(side=sig.side, reason=sig.reason, entry=num(entry), sl=sl, tp=tp, size=size,
-                             risk=num(abs(entry - sl) * size * p["cval"]), reward=num(abs(tp - entry) * size * p["cval"]))
+        out["signal"] = dict(plan(sym, cfg, sig.side, sig.atr), reason=sig.reason)
+    if len(lv) > len(d):                                     # forming candle exists: "if it closed now" preview
+        out["rsi_live"] = num(lv["rsi"].iloc[-1], 1)
+        pv = signal_at(lv, len(lv) - 1, cfg)
+        if pv:
+            out["preview"] = dict(side=pv.side, reason=pv.reason)
     return out
 
 
 def read_trades(path, source):
     if not os.path.exists(path):
         return []
-    t = pd.read_csv(path).tail(50)
-    t = t.replace({np.nan: None})
+    t = pd.read_csv(path).tail(50).replace({np.nan: None})
     rows = t.to_dict("records")
     for row in rows:
         row["source"] = source
@@ -135,15 +198,13 @@ def paper_books():
         if not os.path.exists(cfg.state_path) and not os.path.exists(cfg.trades_path):
             continue
         s = RiskManager(cfg).state
-        trades = read_trades(cfg.trades_path, f"paper {tf}")
+        trades = read_trades(cfg.trades_path, f"Paper {tf}")
         closed = [x for x in trades if x.get("event") in ("stop", "target")]
         positions = []
         for sym, p in s.paper_positions.items():
-            m = mark_price(sym)
-            direction = 1 if p["side"] == "buy" else -1
-            positions.append(dict(source=f"paper {tf}", symbol=sym, side=p["side"], size=p["size"],
-                                  entry=num(p["entry"]), sl=p["sl"], tp=p["tp"], mark=num(m), opened=p.get("opened"),
-                                  upnl=num((m - p["entry"]) * direction * p["size"] * p["cval"]) if m else None))
+            positions.append(dict(source=f"Paper {tf}", symbol=sym, side=p["side"], size=p["size"], cval=p["cval"],
+                                  entry=num(p["entry"]), sl=p["sl"], tp=p["tp"], mark=num(mark_price(sym)),
+                                  opened=p.get("opened")))
         books.append(dict(tf=tf, equity=num(s.paper_equity or CFG.bot_capital_usd), start=CFG.bot_capital_usd,
                           positions=positions, trades=trades, wins=sum(1 for x in closed if (x.get("pnl") or 0) > 0),
                           losses=sum(1 for x in closed if (x.get("pnl") or 0) <= 0),
@@ -163,9 +224,8 @@ def live_account():
                 pid = product(sym)["pid"]
                 pos = CLIENT.get_position(pid)
                 size = float(pos.get("size", 0) or 0)
-                orders = CLIENT.get_open_orders(pid)
                 sl = tp = None
-                for o in orders:
+                for o in CLIENT.get_open_orders(pid):
                     kind = str(o.get("stop_order_type") or o.get("order_type") or "")
                     price = num(o.get("stop_price") or o.get("limit_price"))
                     out["orders"].append(dict(symbol=sym, side=o.get("side"), size=o.get("size"), type=kind,
@@ -175,43 +235,67 @@ def live_account():
                     elif "take_profit" in kind:
                         tp = price
                 if size:
-                    entry = float(pos.get("entry_price") or 0)
-                    m = mark_price(sym)
                     out["positions"].append(dict(source="Delta account", symbol=sym, side="buy" if size > 0 else "sell",
-                                                 size=abs(size), entry=num(entry), sl=sl, tp=tp, mark=num(m),
-                                                 upnl=num((m - entry) * size * product(sym)["cval"]) if m else None))
+                                                 size=abs(size), cval=product(sym)["cval"],
+                                                 entry=num(pos.get("entry_price")), sl=sl, tp=tp, mark=num(mark_price(sym))))
         except Exception as e:                       # show the error on the page instead of crashing
             out["error"] = str(e)[:300]
         return out
-    return cached(("live",), 15, load)
+    return cached(("live",), 10, load)
 
 
 def overview():
     cards, errors = [], []
+    with ThreadPoolExecutor(max_workers=8) as ex:            # warm caches in parallel (first load ~0.5 s)
+        jobs = [ex.submit(series, s, tf) for s in CFG.symbols for tf in TIMEFRAMES]
+        jobs += [ex.submit(ticker, s) for s in CFG.symbols] + [ex.submit(live_account)]
+        for j in jobs:
+            try:
+                j.result()
+            except Exception:
+                pass                                         # reported per card below
     for sym in CFG.symbols:
         for tf in TIMEFRAMES:
             try:
                 cards.append(card(sym, tf))
             except Exception as e:
                 errors.append(f"{sym} {tf}: {e}")
-    live_trades = read_trades(f"{CFG.log_dir}/trades.csv", "LIVE")
     return dict(generated=int(time.time()), mode="PAPER" if CFG.dry_run else "LIVE", env=CFG.env,
                 strategy=CFG.strategy, resolution=CFG.resolution, symbols=list(CFG.symbols),
                 capital=CFG.bot_capital_usd, risk=CFG.risk_per_trade, atr_mult=CFG.atr_stop_mult, rr=CFG.reward_risk,
-                rsi_level=CFG.rsi_pullback, cards=cards, paper=paper_books(), live=live_account(),
-                live_trades=live_trades, errors=errors)
+                rsi_level=CFG.rsi_pullback, max_trades=CFG.max_trades_per_day, daily_loss=CFG.daily_loss_limit,
+                cards=cards, paper=paper_books(), live=live_account(),
+                live_trades=read_trades(f"{CFG.log_dir}/trades.csv", "LIVE"), errors=errors)
+
+
+def live(sym, tf):
+    out = dict(server_time=time.time(), tickers={}, forming=None, errors=[])
+    for s in CFG.symbols:
+        try:
+            out["tickers"][s] = ticker(s)
+        except Exception as e:
+            out["errors"].append(f"{s}: {e}")
+    if sym in CFG.symbols and tf in TIMEFRAMES:
+        try:
+            out["forming"] = forming(sym, tf)
+        except Exception as e:
+            out["errors"].append(f"candle: {e}")
+    return out
 
 
 def chart(sym, tf):
-    cfg = dataclasses.replace(CFG, resolution=tf)
-    d = candles(sym, tf).tail(300).reset_index(drop=True)
-    full = candles(sym, tf)
-    off = len(full) - len(d)
+    cfg = tf_cfg(tf)
+    s = series(sym, tf)
+    closed, full = s["closed"], s["live"]
+    lv = full.tail(300).reset_index(drop=True)
+    start = len(full) - len(lv)                              # index of lv[0] inside `full` (== inside `closed`)
     markers = []
-    for i in range(len(d)):
-        s = signal_at(full, off + i, cfg)
-        if s:
-            markers.append(dict(time=int(d["time"].iloc[i]), side=s.side))
+    for i in range(len(lv)):
+        j = start + i
+        if j < len(closed):
+            sg = signal_at(closed, j, cfg)
+            if sg:
+                markers.append(dict(time=int(lv["time"].iloc[i]), side=sg.side))
     lines = []
     for b in paper_books():
         if b["tf"] == tf:
@@ -224,10 +308,9 @@ def chart(sym, tf):
     c = card(sym, tf)
     if c["signal"]:
         lines.append(dict(label="Signal", entry=c["signal"]["entry"], sl=c["signal"]["sl"], tp=c["signal"]["tp"]))
-    rec = lambda col: [dict(time=int(t), value=num(v, 4)) for t, v in zip(d["time"], d[col]) if num(v) is not None]
-    return dict(symbol=sym, tf=tf, markers=markers, lines=lines, rsi_level=CFG.rsi_pullback,
-                candles=[dict(time=int(r.time), open=r.open, high=r.high, low=r.low, close=r.close)
-                         for r in d.itertuples()],
+    rec = lambda col: [dict(time=int(t), value=num(v, 4)) for t, v in zip(lv["time"], lv[col]) if num(v) is not None]
+    return dict(symbol=sym, tf=tf, markers=markers, lines=lines, rsi_level=CFG.rsi_pullback, card=c,
+                candles=[dict(time=int(r.time), open=r.open, high=r.high, low=r.low, close=r.close) for r in lv.itertuples()],
                 ema50=rec("ema_slow"), ema200=rec("ema_trend"), rsi=rec("rsi"))
 
 
@@ -244,14 +327,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        sym = q.get("symbol", CFG.symbols[0]).upper()
+        tf = q.get("tf", CFG.resolution)
         try:
             if u.path in ("/", "/index.html"):
                 return self._send(200, (HERE / "dashboard.html").read_bytes(), "text/html; charset=utf-8")
             if u.path == "/api/overview":
                 return self._send(200, json.dumps(overview()), "application/json")
+            if u.path == "/api/live":
+                return self._send(200, json.dumps(live(sym, tf)), "application/json")
             if u.path == "/api/chart":
-                sym = q.get("symbol", CFG.symbols[0]).upper()
-                tf = q.get("tf", CFG.resolution)
                 if sym not in CFG.symbols or tf not in TIMEFRAMES:
                     return self._send(400, '{"error":"bad symbol/tf"}', "application/json")
                 return self._send(200, json.dumps(chart(sym, tf)), "application/json")
