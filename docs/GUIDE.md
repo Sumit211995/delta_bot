@@ -2,7 +2,7 @@
 
 **What it is, how it works, how it was built, and how to deploy it**
 
-Version 1.0 · November 2026 · for Delta Exchange India perpetual futures (BTCUSD, ETHUSD, SOLUSD)
+Version 1.1 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange India perpetual futures (BTCUSD, ETHUSD, SOLUSD)
 
 > **Current mode: PAPER TRADING ONLY.** `DRY_RUN=1` is set in `.env`. The bot sends **no real orders**. It simulates
 > every trade with the same entry, stop loss and target it would use with real money, and records the results.
@@ -24,11 +24,11 @@ Version 1.0 · November 2026 · for Delta Exchange India perpetual futures (BTCU
 10. How we built it: the development story
 11. Tools used and why
 12. Why Python?
-13. Test results: what the data says
+13. Test results: what the data says (incl. trailing-stop comparison)
 14. Daily use: commands
 15. Configuration reference (`.env`)
 16. Deployment: running it 24/7 on a free server
-17. Going live later: checklist (not now)
+17. Can I use the trailing-stop strategy? Going live later (not now)
 18. Security rules
 19. Troubleshooting and FAQ
 20. Glossary
@@ -78,9 +78,10 @@ each loss.
               strategy.py │      │      │ risk.py       │ reads
           (EMA, RSI, ATR, │      │      │ (size, limits,│
            rules, levels) │      │      │  halt)        │
-                          │  paper.py   │               │
-                          │ (simulate   │               │
-                          │  SL / TP)   │               │
+                          │  paper.py   │               │ backtest.py
+                          │ (simulate   │               │ (replays ~2.5 years
+                          │  SL / TP /  │               │  for the "strategy
+                          │  trailing)  │               │  history" section)
                           ▼      ▼      ▼               │
                    state/*.json   logs/*.csv  ──────────┘
                    (memory)       (trade journal)
@@ -90,17 +91,18 @@ each loss.
 
 | File | Lines | Job |
 |---|---|---|
-| `bot.py` | ~355 | The main program. Runs forever, checks every 20 seconds whether a candle closed, and places or simulates trades. |
-| `strategy.py` | ~140 | The "brain": indicators (EMA, RSI, ATR), the buy/sell rules, stop/target levels. |
+| `bot.py` | ~370 | The main program. Runs forever, checks every 20 seconds whether a candle closed, and places or simulates trades for every record (4h, 30m, 1h, 4h trail). |
+| `strategy.py` | ~150 | The "brain": indicators (EMA, RSI, ATR), the buy/sell rules, stop/target levels, and the trailing-stop rule. |
 | `risk.py` | ~80 | Position size, daily loss limit, max drawdown halt, trades-per-day cap. Remembers state on disk. |
-| `paper.py` | ~25 | Simulates the stop/target for paper trades. Same rules as the backtest. |
+| `paper.py` | ~45 | Simulates paper trades candle by candle: fixed stop/target, or trailing stop. Same rules as the backtest. |
 | `delta_client.py` | ~130 | Talks to Delta's API. Signs private requests with your secret key (HMAC-SHA256). |
-| `config.py` | ~140 | Reads `.env`, applies safe defaults, refuses unsafe settings. |
+| `config.py` | ~160 | Reads `.env`, applies safe defaults, refuses unsafe settings (e.g. trailing exit in live mode). |
 | `notifier.py` | ~15 | Sends Telegram messages. |
-| `dashboard.py` + `dashboard.html` | ~440 + ~980 | The live web screen (read-only; it can never place an order). |
-| `backtest.py` | ~125 | Replays history to measure how the strategy would have done. |
+| `dashboard.py` + `dashboard.html` | ~530 + ~1,230 | The live web screen (read-only; it can never place an order). |
+| `backtest.py` | ~175 | Replays history. Contains the fast simulator used by the dashboard's strategy history. |
 | `train_model.py` | ~60 | Optional machine-learning filter (off by default; not needed). |
-| `tests/test_core.py` | | 12 automatic tests for the important logic. |
+| `tests/test_core.py` | ~210 | 15 automatic tests for the important logic. |
+| `docs/GUIDE.md`, `docs/build_pdf.py` | | This guide and the script that turns it into the PDF. |
 | `Dockerfile`, `docker-compose.yml` | | Packaging for running on a server. |
 
 ---
@@ -181,6 +183,18 @@ SELL if downtrend and previous RSI > 60  and  current RSI ≤ 60     (bounce is 
 There is no forecast, no AI guess and no news reading. The same candles always give the same answer. That is a
 strength: you can test it on years of history and know exactly why every trade happened. (An optional ML filter
 exists in `train_model.py`, but it did not improve results, so it is off.)
+
+### 4.5 Two ways to exit a trade
+
+| | **Fixed 1:3** (the 4h record; used for live orders) | **Trailing stop** (the "4h trail" paper record) |
+|---|---|---|
+| Stop loss at entry | 1.5 × ATR | 1.5 × ATR (same) |
+| Target | 3 × the stop distance | none |
+| After +1R profit | nothing changes | the stop follows 2 × ATR behind the best close, only moving in your favour |
+| Trade ends when | the stop or the target is hit | the (moved) stop is hit |
+| Typical result | −1R or +3R | −1R, small win, or now and then a large win (+5R to +17R) |
+
+Both use exactly the same entry signals. Section 13 compares them.
 
 ---
 
@@ -298,6 +312,8 @@ Start it with `python dashboard.py` and open **http://localhost:8000**.
 | **Signals across timeframes** | A tile per coin per timeframe: NO SIGNAL / BUY / SELL, RSI meter, trend, time to next close |
 | **Paper trading · 30m vs 1h vs 4h** | A score card per timeframe (balance, P&L, win rate, W/L, average R, max drawdown, open trades) and a **trade journal**: one row per trade with timeframe, coin, side, opened time, **entry, stop loss, target**, status (OPEN / ✓ TARGET / ✕ STOP), exit, closed time, time held, P&L and R. Filters for timeframe / coin / status, and **Download CSV**. |
 | **Account & risk** | Mode, Delta wallet, risk settings |
+| **Strategy comparison** (top of the strategy history) | One line per method (30m, 1h, 4h fixed, 4h trail) with all coins combined: trades, trades per month, **success (win rate)**, profit factor, **net profit in $**, return, total R, **₹ result at ₹100 risk per trade**, worst losing streak, max drawdown and best trade. The best value in each column is green. |
+| **Loading shimmer** | Every section shows a moving grey placeholder until its data arrives (prices, signals, chart, journal, history). |
 | **Strategy history · every past trade** (bottom of the page) | The strategy replayed on **all available Delta data** (about 2.5 years) for every coin and every timeframe: a score card per coin × timeframe (trades, win rate, return, profit factor, max drawdown) and a table of **every past trade** with entry, stop loss, target, result, exit, time held, P&L, R and balance. Filters for coin / timeframe / result / side / year, 50 trades per page, **Download CSV**, and **click any row to see that trade on the chart** with its entry/SL/target lines. Simulated with fees and slippage on a separate $500 balance per coin/timeframe. |
 | **Open trades / Event log / Delta orders** | Open positions with live P&L, the raw bot log, and your real open orders on Delta (read-only) |
 
@@ -352,7 +368,14 @@ in VS Code) together with you. The steps were:
 | **12. Real bug found and fixed** | Delta's `/v2/orders` **ignores** `product_id` and returns every coin's orders, so BTC showed ETH's orders. Fixed with `product_ids` plus a second check on our side, and a test. | This could have fooled the live "is my stop loss there?" check |
 | **13. Added coins carefully** | Tested 14 popular coins; only SOL was both profitable and liquid enough | Adding losing coins makes the bot worse |
 | **14. Paper on all timeframes + journal** | One bot paper-trades 30m/1h/4h; the dashboard journal shows every trade | Compare timeframes with live data |
-| **15. Tests + Git** | 12 automated tests; every change committed to Git; pushed to GitHub `Sumit211995/delta_bot` | Prove the logic works and keep history |
+| **15. Tests + Git** | Automated tests for every important rule; every change committed to Git; pushed to GitHub `Sumit211995/delta_bot` | Prove the logic works and keep history |
+| **16. Guide + PDF** | This guide, written in Markdown and printed to PDF with headless Chrome | One place that explains everything |
+| **17. Strategy history** | Replayed the strategy on all of Delta's history (about 2.5 years) for every coin and timeframe and showed each past trade with entry, SL, target and result | See exactly what the rules would have done |
+| **18. Liquidation research** | Delta has no liquidation data, so we tested free stand-ins: funding rate (crowded longs/shorts) and open-interest drops (position flushes) | All three filters cut trades and profit, so none was added |
+| **19. "More trades" research** | 630 variants: shallower pullbacks, looser trend, 2h, 1h, 4h-trend + 1h-entry, other stop/target sizes; tuned on the first 60%, judged on the last 40% | None beat the current rules on unseen data. More trades meant worse trades. |
+| **20. Long-history test** | Downloaded free Binance perpetual history (2019–2026, 10 coins) and tested exits and filters on 6–7 years | The current strategy held up (PF 1.22 on BTC+ETH+SOL). One exit clearly beat it: the trailing stop. |
+| **21. Robustness check** | Tried 16 trailing settings, older vs newer years, every coin, and removed the 5 biggest wins | The trailing stop still won in almost every case |
+| **22. Trailing-stop paper record** | Added "4h trail" as its own paper record (same signals, no fixed target), with tests proving the live paper logic exits exactly like the backtest, plus the comparison table and loading shimmer on the dashboard | Compare both exits on live prices before any real money uses it |
 
 ---
 
@@ -374,6 +397,7 @@ in VS Code) together with you. The steps were:
 | **Git + GitHub** | Version history, backup, deployment source | Every change is recorded and reversible; the server pulls code from GitHub |
 | **Telegram Bot API** | Phone alerts | Free, instant, no app to build |
 | **Delta Exchange India API v2** | Market data and orders | The exchange you trade on; public data needs no key |
+| **Binance public API** (research only) | 2019–2026 perpetual candles for the long-history test | Free, no account, much longer history than Delta. Only public prices were downloaded. |
 | **VS Code + Claude Code** | Editing; AI pair-programming (code, research, tests, review, screenshots) | Faster development with a second pair of eyes on safety |
 | **Headless Google Chrome** | Screenshots to check the UI; turning this guide into a PDF | Already on the Mac; renders exactly like the browser |
 | **Oracle Cloud Always Free** (planned) | 24/7 hosting | Free forever VM in India with a fixed public IP |
@@ -433,8 +457,47 @@ All tests include fees (0.06% per side), slippage (0.02%) and entry on the **nex
 **Timeframes:** 30m and 1h: **0 of 91** setting combinations were profitable on unseen data after fees. 4h: robust.
 
 **How to read this:** profit factor (PF) = money won ÷ money lost; above 1.0 is profitable. **1.1–1.3 is a small
-edge.** Expect losing months, and runs of 8–10 losses in a row. About **6–8 trades per month** across BTC + ETH + SOL
-on 4h. Past results do not guarantee future results.
+edge.** Expect losing months. About **7–8 trades per month** across BTC + ETH + SOL on 4h. Past results do not guarantee
+future results.
+
+### 13.1 Strategy comparison: all coins combined (Delta data, Dec 2023 – Nov 2026)
+
+Each coin starts with $500 (so $1,500 in total), 0.5% risk per trade, compounding, fees + slippage included.
+This is the same table the dashboard shows at the top of the strategy history.
+
+| Method | Trades | Per month | Success (win rate) | Profit factor | Net profit | Return | Total R | At ₹100 risk / trade | Worst losing streak | Max drawdown |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 30m fixed 1:3 | 2,008 | 58 | 26.1% | 0.87 | −$484 | −32.2% | −228R | −₹22,813 | 25 | 49.9% |
+| 1h fixed 1:3 | 996 | 29 | 25.9% | 0.90 | −$188 | −12.5% | −73R | −₹7,276 | 28 | 22.5% |
+| **4h fixed 1:3** (current) | 257 | 7.5 | 30.0% | 1.19 | **+$93** | +6.2% | +38R | **+₹3,827** | 20 | 5.8% |
+| **4h trailing stop** | 286 | 8.3 | **39.9%** | **1.68** | **+$293** | **+19.5%** | **+112R** | **+₹11,214** | **11** | **5.5%** |
+
+"At ₹100 risk / trade" means: if every trade risked exactly ₹100, this is what all the trades together would have made.
+
+### 13.2 Long history: Binance 2019–2026 (BTC + ETH + SOL, 4h)
+
+| Exit method | Trades | Win rate | Profit factor | Total R | Worst losing streak |
+|---|---|---|---|---|---|
+| **Trailing stop** (after +1R, 2 × ATR) | 733 | **41.7%** | **1.48** | **+195R** | **11** |
+| Stop to breakeven at +1R | 713 | 24.5% | 1.31 | +121R | |
+| **Fixed 1:3 (current)** | 635 | 30.1% | 1.22 | +102R | 21 |
+| Half profit at 1.5R | 695 | 43.9% | 1.19 | +77R | |
+| Fixed 1:2 | 683 | 36.3% | 1.07 | +32R | |
+
+On all 10 Binance coins the current strategy was profitable on 7 (not LINK, LTC or XRP). The trailing stop beat the fixed
+target in **both** 2019–2022 and 2023–2026, with 16 different trailing settings. It still won after removing its 5
+biggest trades.
+
+### 13.3 What did not help (tested and rejected)
+
+| Idea | Result on unseen data |
+|---|---|
+| Liquidation stand-ins: skip trades when funding shows crowded longs/shorts | Trades halved, profit cut by more than half |
+| Liquidation stand-in: trade only after a big open-interest drop ("flush") | Worse, and SOL lost money |
+| Shallower pullback (RSI 45/55) for more trades | Lost money (PF 0.91) |
+| 2h or 1h candles, or 4h trend + 1h entry | 2–6× more trades, all about break-even or losing |
+| Target 1:2 instead of 1:3 | About half the long-run profit |
+| ADX trend-strength filter | Fewer trades, no improvement |
 
 ---
 
@@ -632,9 +695,22 @@ can still run `python dashboard.py` locally to view prices; it reads your laptop
 
 ---
 
-## 17. Going live later: checklist (not now)
+## 17. Can I use the trailing-stop strategy? Going live later (not now)
 
-**Do not do this yet.** First collect at least 2–4 weeks of paper results. When you decide to go live:
+**Short answer: yes for paper trading now. Not yet with real money.**
+
+1. **Paper:** the "4h trail" record already runs next to the normal 4h record. Let both collect **4–8 weeks**
+   (about 15–30 signals across the 3 coins) and compare them in the dashboard journal.
+2. **Why not live yet:** for real orders, the bot would have to move the stop-loss order on Delta after every 4h candle.
+   That needs new live order code and its own testing on testnet. Until it exists, the config refuses the trailing exit
+   when `DRY_RUN=0`.
+3. **If you go live before that:** use the normal 4h fixed 1:3. It is also profitable in every test, just less so.
+4. **What to expect from trailing:** more wins (about 40%), but many are small; the profit comes from occasional big
+   trends (+5R to +17R) that can be missing for months. Losing streaks of 10 or more still happen.
+
+### Live checklist (when you decide)
+
+**Do not do this yet.** First collect at least 4–8 weeks of paper results. When you decide to go live:
 
 1. Paper results on 4h look in line with the backtest (win rate about 25–35%, losses kept small).
 2. Use a **separate Delta sub-account** for the bot, or close manual trades on BTC/ETH/SOL. The bot ignores coins

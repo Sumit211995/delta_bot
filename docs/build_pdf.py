@@ -89,6 +89,7 @@ def build():
     body_md = re.sub(r"^- \[ \] ", "- <span class='check'>☐</span> ", body_md, flags=re.M)
     body = markdown.markdown(body_md, extensions=["tables", "fenced_code", "sane_lists"])
     body = body.replace("<li><span class='check'>", "<li class='cb'><span class='check'>")
+    body = re.sub(r"([+−-]?[₹$][\d,.]+)", r'<span style="white-space:nowrap">\1</span>', body)   # nowrap money
     body = re.sub(r"<h2>(\d+\. )", r'<h2 class="chap">\1', body)              # each numbered chapter on a new page
     body = body.replace("<h2>Contents</h2>", '<div class="toc"><h2>Contents</h2>', 1)
     body = re.sub(r'(<div class="toc"><h2>Contents</h2>\s*<ol>.*?</ol>)', r"\1</div>", body, count=1, flags=re.S)

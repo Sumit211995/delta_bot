@@ -263,6 +263,14 @@ td .sk.line { margin: 2px 0; }
 .sk-note { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
 
+
+/* ---------- strategy comparison ---------- */
+#hCmp { margin-bottom: 16px; }
+#hCmp h3 { font-size: 13px; margin: 0 0 8px; color: var(--text-2); font-weight: 700; }
+#hCmp table td.best { color: var(--up); font-weight: 700; }
+#hCmp tr.win td:first-child { box-shadow: inset 3px 0 0 var(--up); }
+#hCmp .cmpnote { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
 /* ---------- toasts ---------- */
 .toasts { position: fixed; right: 16px; top: 70px; z-index: 50; display: grid; gap: 10px; width: min(360px, calc(100vw - 32px)); }
 .toast { background: var(--surface); border: 1px solid var(--border-2); border-left: 4px solid var(--accent); border-radius: 12px;
@@ -280,7 +288,9 @@ details.how[open] summary::before { transform: rotate(90deg); }
 .how-grid div { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
 .how-grid h4 { margin: 0 0 6px; font-size: 13px; } .how-grid p { margin: 0; color: var(--text-2); font-size: 13px; }
 .err { color: var(--down); font-size: 12px; margin-top: 8px; }
-footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; }
+footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; display: grid; gap: 4px; }
+footer .sig { font-size: 13px; color: var(--text-2); letter-spacing: .3px; }
+footer .sig b { color: var(--accent); font-weight: 700; }
 
 
 /* ---------- signal banners ---------- */
@@ -433,6 +443,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
   <div class="panel section" style="--i:8" id="histPanel">
     <div class="ph"><h2>Strategy history · every past trade</h2><span class="hint" id="hHint">simulated on all available Delta data · loading…</span></div>
     <div class="hprog" id="hProg"><i style="width:0%"></i></div>
+    <div id="hCmp"></div>
     <div class="hgrid" id="hGrid"></div>
     <div class="filters" id="hFilters"></div>
     <div class="scroll"><table id="hTbl"></table></div>
@@ -440,7 +451,9 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
     <p class="sub" style="margin-top:12px" id="hNote"></p>
   </div>
 
-  <footer>$um!t_K@K- Delta Bot dashboard · data from Delta Exchange India public API · refresh: prices 2 s, signals 10 s</footer>
+  <footer><div class="sig">Built by <b>$um!t_K@Ktw@n</b></div>
+    <div>Delta Bot dashboard · data from Delta Exchange India public API · read-only, places no orders ·
+      refresh: prices 2 s, signals 10 s, strategy history 30 min · © <span id="yr">2026</span></div></footer>
 </div>
 <div class="toasts" id="toasts"></div>
 
@@ -933,6 +946,7 @@ function renderHistory() {
     grid.querySelectorAll(".hcell[data-s]").forEach(el => el.onclick = () => {
       const same = S.hf.coin === el.dataset.s && S.hf.tf === el.dataset.t;
       S.hf.coin = same ? "all" : el.dataset.s; S.hf.tf = same ? "all" : el.dataset.t; S.hPage = 0; renderHistory(); }); }
+  renderCompare();
   // filters
   const all = hRows(), years = [...new Set(all.map(x => yearOf(x.t0)))].sort();
   $("hFilters").innerHTML =
@@ -974,6 +988,42 @@ function renderHistory() {
     Each coin/timeframe pair is simulated on its own $${fmt(d.capital, 0)} balance (compounding), entering at the open of the candle after the signal, stop checked before target.
     These are <b>simulated past results</b>, not real trades; the future can differ.` : "";
 }
+
+function renderCompare() {
+  const d = S.h, ov = S.ov; if (!d || !ov || !d.books.length) return;
+  const rows = BOOKS.map(bk => {
+    const bs = d.books.filter(b => b.tf === bk); if (!bs.length) return null;
+    const tr = bs.flatMap(b => b.trades.filter(x => x.res !== "open").map(x => ({ ...x, symbol: b.symbol }))).sort((a, b) => a.t1 - b.t1);
+    const r = tr.map(x => x.r || 0), wins = r.filter(v => v > 0).length;
+    const gp = tr.filter(x => x.pnl > 0).reduce((a, x) => a + x.pnl, 0), gl = -tr.filter(x => x.pnl <= 0).reduce((a, x) => a + x.pnl, 0);
+    let streak = 0, worst = 0; for (const v of r) { streak = v <= 0 ? streak + 1 : 0; worst = Math.max(worst, streak); }
+    const start = bs.reduce((a, b) => a + b.start, 0), end = bs.reduce((a, b) => a + b.end, 0);
+    const years = Math.max(0.5, (Math.max(...bs.map(b => b.last)) - Math.min(...bs.map(b => b.first))) / 31536000);
+    return { bk, n: tr.length, win: tr.length ? wins / tr.length * 100 : 0, pf: gl ? gp / gl : null, R: r.reduce((a, v) => a + v, 0),
+      start, end, net: end - start, ret: (end / start - 1) * 100, dd: Math.max(...bs.map(b => b.max_dd || 0)), worst,
+      best: r.length ? Math.max(...r) : 0, perMonth: tr.length / years / 12, years };
+  }).filter(Boolean);
+  if (!rows.length) return;
+  const top = rows.reduce((a, b) => (b.R > a.R ? b : a));
+  const bestOf = (k, hi = true) => rows.reduce((a, b) => ((hi ? b[k] > a[k] : b[k] < a[k]) ? b : a))[k];
+  const cell = (x, k, txt, hi = true) => `<td class="mono ${x[k] === bestOf(k, hi) ? "best" : ""}">${txt}</td>`;
+  const years = rows[0].years;
+  $("hCmp").innerHTML = `<h3>Strategy comparison · all coins combined (${ov.symbols.map(s => s.replace("USD", "")).join(" + ")}) · last ${years.toFixed(1)} years</h3>
+    <div class="scroll"><table><thead><tr><th>Method</th><th>Trades</th><th>Per month</th><th>Success (win rate)</th><th>Profit factor</th>
+      <th>Net profit ($${fmt(rows[0].start, 0)} start)</th><th>Return</th><th>Total R</th><th>At ₹100 risk / trade</th><th>Worst losing streak</th><th>Max drawdown</th><th>Best trade</th></tr></thead><tbody>` +
+    rows.map(x => `<tr class="${x === top ? "win" : ""}"><td><span class="tfb ${x.bk === ov.resolution ? "traded" : ""} ${isTrail(x.bk) ? "trail" : ""}">${blabel(x.bk)}</span>
+        <span class="sub">${isTrail(x.bk) ? " trailing stop" : " fixed 1:3"}</span></td>
+      <td class="mono">${x.n}</td><td class="mono">${x.perMonth.toFixed(1)}</td>${cell(x, "win", x.win.toFixed(1) + "%")}
+      ${cell(x, "pf", x.pf === null ? "–" : x.pf.toFixed(2))}
+      ${cell(x, "net", `<span class="${x.net >= 0 ? "pos-t" : "neg-t"}">${money(x.net)}</span>`)}${cell(x, "ret", (x.ret > 0 ? "+" : "") + x.ret.toFixed(1) + "%")}
+      ${cell(x, "R", (x.R > 0 ? "+" : "") + x.R.toFixed(1) + "R")}
+      <td class="mono ${x.R >= 0 ? "pos-t" : "neg-t"}">${x.R >= 0 ? "+" : "−"}₹${Math.round(Math.abs(x.R) * 100).toLocaleString("en-IN")}</td>
+      ${cell(x, "worst", x.worst + " losses", false)}${cell(x, "dd", fmt(x.dd, 1) + "%", false)}<td class="mono">+${x.best.toFixed(1)}R</td></tr>`).join("") +
+    `</tbody></table></div>
+    <div class="cmpnote">Simulated on Delta's own candles with fees + slippage, $${fmt(d.capital, 0)} per coin at ${(d.risk * 100).toFixed(1)}% risk per trade (compounding).
+      "At ₹100 risk / trade" = total R × ₹100 (no compounding). Green = best in that column. Past results; the future can differ.</div>`;
+}
+
 function hChips(key, label, opts) {
   return `<span class="lbl">${label}</span><span class="fchips" data-k="${key}">` +
     opts.map(([v, t]) => `<button data-v="${v}" class="${S.hf[key] === v ? "on" : ""}">${t}</button>`).join("") + "</span>";
@@ -1162,7 +1212,8 @@ function skel(id, n, h, opts = {}) {
 function unskel(...ids) { ids.forEach(id => { const el = $(id); if (el) el.querySelectorAll("[data-sk]").forEach(x => x.remove()); }); }
 skel("tickers", 3, 96); skel("banners", 3, 170, { note: "Loading live signals from Delta…" }); skel("ticket", 1, 210);
 skel("steps", 3, 44); skel("matrix", 3, 120, { full: true }); skel("books", 3, 190); skel("jTbl", 4);
-skel("kpis", 7, 74); skel("tbl", 3); skel("hGrid", 3, 110, { full: true, note: "Replaying ~2.5 years of candles for every coin and timeframe (about 20 s)…" }); skel("hTbl", 8);
+skel("kpis", 7, 74); skel("tbl", 3); skel("hGrid", 3, 110, { full: true, note: "Replaying ~2.5 years of candles for every coin and timeframe (about 20 s)…" }); skel("hTbl", 8); skel("hCmp", 1, 150);
+if ($("yr")) $("yr").textContent = new Date().getFullYear();
 
 initCharts();
 pullOverview().then(() => { pullLive(); pullHistory(); });
