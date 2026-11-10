@@ -16,6 +16,7 @@
   --text: #eceef3; --text-2: #a8afbf; --muted: #6c7489;
   --up: #1fbf87; --up-soft: rgba(31,191,135,.14); --down: #ef5f5f; --down-soft: rgba(239,95,95,.14);
   --warn: #e7a93b; --warn-soft: rgba(231,169,59,.14);
+  --info: #a29bfe;
   --accent: #f2711c; --accent-soft: rgba(242,113,28,.16);
   --ema50: #3987e5; --ema200: #d95926; --neutral: #8b93a7;
   --shadow: 0 10px 30px rgba(0,0,0,.35);
@@ -28,6 +29,7 @@
   --text: #0d1017; --text-2: #4d5566; --muted: #7d8597;
   --up: #12996a; --up-soft: rgba(18,153,106,.10); --down: #d94242; --down-soft: rgba(217,66,66,.09);
   --warn: #b77b0e; --warn-soft: rgba(183,123,14,.10);
+  --info: #5b4fd6;
   --accent: #e2620e; --accent-soft: rgba(226,98,14,.10);
   --ema50: #2a78d6; --ema200: #eb6834; --neutral: #7d8597;
   --shadow: 0 8px 24px rgba(20,30,50,.08);
@@ -223,12 +225,15 @@ tbody tr { transition: background .2s; } tbody tr:hover { background: var(--surf
 .st.won { color: var(--up); background: var(--up-soft); } .st.lost { color: var(--down); background: var(--down-soft); }
 .tfb { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--surface-3); color: var(--text-2); }
 .tfb.traded { color: var(--accent); }
+.tfb.trail { color: var(--info); background: color-mix(in srgb, var(--info) 14%, transparent); }
+.trailtag { color: var(--info); font-weight: 600; }
+.slnow { font-size: 11px; color: var(--muted); }
 tr.jnew { animation: pop .6s both; }
 .why-row td { color: var(--muted); font-size: 12px; white-space: normal; padding-top: 0; }
 
 
 /* ---------- strategy history ---------- */
-.hgrid { display: grid; grid-template-columns: 70px repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.hgrid { --hcol0: 70px; display: grid; grid-template-columns: 70px repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
 .hcell { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px; cursor: pointer; position: relative;
   transition: transform .2s, border-color .2s; animation: rise .5s both; overflow: hidden; }
 .hcell:hover { transform: translateY(-2px); border-color: var(--border-2); }
@@ -246,7 +251,7 @@ tr.jnew { animation: pop .6s both; }
 .pager button:disabled { opacity: .4; cursor: default; }
 #hTbl tbody tr { cursor: pointer; }
 .st.sim { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-@media (max-width: 720px) { .hgrid { grid-template-columns: 44px repeat(3, minmax(0, 1fr)); gap: 6px; } .hcell { padding: 8px; } .hcell .hv { font-size: 14px; } }
+@media (max-width: 720px) { .hgrid { --hcol0: 44px; gap: 6px; } .hcell { padding: 8px; } .hcell .hv { font-size: 14px; } }
 
 
 /* ---------- loading shimmer placeholders (removed as soon as each section's data arrives) ---------- */
@@ -333,7 +338,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
 </head>
 <body>
 <div class="topbar"><div class="in">
-  <div class="brand"><div class="logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 18 L12 4 L20 18 Z" fill="#fff"/></svg></div>Delta Bot</div>
+  <div class="brand"><div class="logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 18 L12 4 L20 18 Z" fill="#fff"/></svg></div>Crypto Delta Bot</div>
   <span id="modePill" class="pill">…</span>
   <span class="pill" id="connPill"><span class="dot" id="connDot"></span><span id="connText">Connecting…</span></span>
   <span class="sub" id="subline"></span>
@@ -389,7 +394,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
   </div>
 
   <div class="panel section" style="--i:5" id="journalPanel">
-    <div class="ph"><h2>Paper trading · 30m vs 1h vs 4h</h2><span class="hint">every trade the bot simulates, on every timeframe · no real orders · click a card to filter</span></div>
+    <div class="ph"><h2>Paper trading · 30m · 1h · 4h · 4h trail</h2><span class="hint">every trade the bot simulates, on every timeframe · no real orders · click a card to filter</span></div>
     <div class="books" id="books"></div>
     <div class="filters" id="jFilters"></div>
     <div class="scroll"><table id="jTbl"></table></div>
@@ -435,13 +440,15 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
     <p class="sub" style="margin-top:12px" id="hNote"></p>
   </div>
 
-  <footer>Delta Bot dashboard · data from Delta Exchange India public API · refresh: prices 2 s, signals 10 s</footer>
+  <footer>$um!t_K@K- Delta Bot dashboard · data from Delta Exchange India public API · refresh: prices 2 s, signals 10 s</footer>
 </div>
 <div class="toasts" id="toasts"></div>
 
 <script>
 "use strict";
 const IST = 19800, TFS = ["30m", "1h", "4h"];
+let BOOKS = [...TFS];                                       // paper records: timeframes + trailing variants ("4h-trail")
+const resOf = b => String(b).split("-")[0], blabel = b => String(b).replace("-trail", " trail"), isTrail = b => /-trail$/.test(b);
 const S = { sym: null, tf: null, ov: null, live: null, chartLast: 0, lastSig: {}, lastPx: {}, spark: {}, lastOk: 0, tab: "open", first: true };
 let chart, rsiChart, candleS, ema50S, ema200S, rsiS, priceLines = [];
 
@@ -747,7 +754,7 @@ function renderTable() {
       open.map(p => { const pnl = livePnl(p), t = S.live && S.live.tickers[p.symbol];
         const prog = p.sl && p.tp && t ? Math.max(-1, Math.min(1, (t.mark - p.entry) / Math.abs((pnl >= 0 ? p.tp : p.sl) - p.entry))) : 0;
         return `<tr><td>${esc(p.source)}</td><td><b>${p.symbol}</b></td><td class="${p.side === "buy" ? "pos-t" : "neg-t"}">${p.side.toUpperCase()}</td>
-        <td class="mono">${p.size}</td><td class="mono">${px(p.entry)}</td><td class="mono neg-t">${px(p.sl)}</td><td class="mono pos-t">${px(p.tp)}</td>
+        <td class="mono">${p.size}</td><td class="mono">${px(p.entry)}</td><td class="mono neg-t">${px(p.sl)}</td><td class="mono pos-t">${p.trail ? '<span class="trailtag">trailing</span>' : px(p.tp)}</td>
         <td class="mono">${t ? px(t.mark) : px(p.mark)}</td><td class="mono ${(pnl || 0) >= 0 ? "pos-t" : "neg-t"}">${pnl === null ? "–" : money(pnl)}
         <span class="pnlbar"><i style="left:50%;width:${Math.abs(prog * (p.side === "buy" ? 1 : -1)) * 50}%;${(pnl || 0) < 0 ? "transform:translateX(-100%);" : ""}background:${(pnl || 0) >= 0 ? "var(--up)" : "var(--down)"}"></i></span></td></tr>`; }).join("") + "</tbody>"
       : `<tbody><tr><td class="empty"><div class="big">◎</div>No open trades. The bot is waiting for a signal on ${d.resolution}.</td></tr></tbody>`;
@@ -785,26 +792,26 @@ function jRows() {
   rows.forEach(x => {                                        // link open journal rows to live state for P&L
     if (x.status !== "open") return;
     const p = (byTf[x.tf].positions || []).find(q => q.symbol === x.symbol);
-    x.cval = p ? p.cval : null; x.mark = p ? p.mark : null;
+    x.cval = p ? p.cval : null; x.mark = p ? p.mark : null; x.slNow = p ? p.sl : null;
     x.live = p ? livePnl({ ...p }) : null;
   });
-  rows.sort((a, b) => (b.opened || 0) - (a.opened || 0) || TFS.indexOf(b.tf) - TFS.indexOf(a.tf));
+  rows.sort((a, b) => (b.opened || 0) - (a.opened || 0) || BOOKS.indexOf(b.tf) - BOOKS.indexOf(a.tf));
   return rows;
 }
 function dur(a, b) { if (!a) return "–"; const s = Math.max(0, (b || Date.now() / 1000) - a), h = Math.floor(s / 3600);
   return h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : h ? `${h}h ${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 60)}m`; }
 function renderBooks() {
   const d = S.ov, box = $("books");
-  const html = TFS.map(tf => {
-    const b = d.paper.find(x => x.tf === tf), traded = tf === d.resolution;
+  const html = BOOKS.map(tf => {
+    const b = d.paper.find(x => x.tf === tf), traded = tf === d.resolution, tr = isTrail(tf);
     if (!b) return `<div class="book ${traded ? "traded" : ""} ${S.jf.tf === tf ? "on" : ""}" data-tf="${tf}">
-      <div class="bh"><span>${tf} ${traded ? "★" : ""}</span><small>not started</small></div>
-      <div class="sub" style="margin-top:8px">Run <span class="mono">python bot.py</span>. ${tf} is ${d.paper_timeframes && d.paper_timeframes.includes(tf) || traded ? "enabled" : "not in PAPER_TIMEFRAMES"}.</div></div>`;
+      <div class="bh"><span>${blabel(tf)} ${traded ? "★" : ""}</span><small>not started</small></div>
+      <div class="sub" style="margin-top:8px">${tr ? `Trailing-stop test: no fixed target, the stop follows ${d.trail ? d.trail.atr : 2}×ATR behind price after +${d.trail ? d.trail.activate_r : 1}R. ` : ""}Restart <span class="mono">python bot.py</span> to start this record.</div></div>`;
     const open = b.positions.length, liveOpen = b.positions.reduce((a, p) => a + (livePnl(p) || 0), 0);
     const pct = b.start ? (b.equity - b.start) / b.start * 100 : 0;
     return `<div class="book ${traded ? "traded" : ""} ${S.jf.tf === tf ? "on" : ""}" data-tf="${tf}">
-      <div class="bh"><span>${tf} ${traded ? '<span style="color:var(--accent)">★ traded</span>' : '<small>paper · watch only</small>'}</span>
-        <small>${b.halted ? "⛔ halted" : b.last_checked ? "checked " + ist(b.last_checked + ({ "30m": 1800, "1h": 3600, "4h": 14400 })[tf]) : "waiting"}</small></div>
+      <div class="bh"><span>${blabel(tf)} ${traded ? '<span style="color:var(--accent)">★ traded</span>' : tr ? '<small class="trailtag">trailing stop · paper test</small>' : '<small>paper · watch only</small>'}</span>
+        <small>${b.halted ? "⛔ halted" : b.last_checked ? "checked " + ist(b.last_checked + ({ "30m": 1800, "1h": 3600, "4h": 14400 })[resOf(tf)]) : "waiting"}</small></div>
       <div class="eq mono">$${fmt(b.equity)} <span class="${b.net >= 0 ? "pos-t" : "neg-t"}" style="font-size:13px">${money(b.net || 0)} (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span></div>
       <div class="sub">started at $${fmt(b.start, 0)}${open ? ` · open P&L <b class="${liveOpen >= 0 ? "pos-t" : "neg-t"}">${money(liveOpen)}</b>` : ""}</div>
       <div class="bg"><div>Trades<b class="mono">${b.closed}${open ? ` +${open} open` : ""}</b></div>
@@ -828,7 +835,7 @@ function renderJournal() {
   const all = jRows();
   const cnt = f => all.filter(f).length;
   $("jFilters").innerHTML =
-    chipGroup("tf", "Timeframe", [["all", `All (${all.length})`], ...TFS.map(t => [t, `${t} (${cnt(x => x.tf === t)})`])]) +
+    chipGroup("tf", "Record", [["all", `All (${all.length})`], ...BOOKS.map(t => [t, `${blabel(t)} (${cnt(x => x.tf === t)})`])]) +
     chipGroup("coin", "Coin", [["all", "All"], ...d.symbols.map(s => [s, s.replace("USD", "")])]) +
     chipGroup("st", "Status", [["all", "All"], ["open", `Open (${cnt(x => x.status === "open")})`], ["won", `Won (${cnt(x => x.status === "won")})`], ["lost", `Lost (${cnt(x => x.status === "lost")})`]]) +
     `<button class="btn-dl" id="jDl">⬇ Download CSV</button>`;
@@ -845,12 +852,14 @@ function renderJournal() {
       const k = x.tf + x.symbol + x.opened + x.status, isNew = S.jSeen && !seen.has(k);
       const tk = S.live && S.live.tickers[x.symbol], now = tk ? tk.mark : x.mark;
       const pnl = x.status === "open" ? (x.cval && now ? (now - x.entry) * (x.side === "buy" ? 1 : -1) * x.size * x.cval : null) : x.pnl;
-      const st = x.status === "open" ? `<span class="st open">OPEN</span>` : x.status === "won" ? `<span class="st won">✓ TARGET</span>` : `<span class="st lost">✕ STOP</span>`;
+      const st = x.status === "open" ? `<span class="st open">OPEN</span>` : x.hit === "trail" ? `<span class="st ${x.status}">${x.status === "won" ? "✓" : "✕"} TRAIL STOP</span>`
+        : x.status === "won" ? `<span class="st won">✓ TARGET</span>` : `<span class="st lost">✕ STOP</span>`;
       return `<tr class="${isNew ? "jnew" : ""}" title="${esc(x.reason || "")}"><td class="mono" style="color:var(--muted)">${n - i}</td>
-        <td><span class="tfb ${x.tf === d.resolution ? "traded" : ""}">${x.tf}</span></td><td><b>${esc(x.symbol)}</b></td>
+        <td><span class="tfb ${x.tf === d.resolution ? "traded" : ""} ${isTrail(x.tf) ? "trail" : ""}">${blabel(x.tf)}</span></td><td><b>${esc(x.symbol)}</b></td>
         <td class="${x.side === "buy" ? "pos-t" : "neg-t"}"><b>${x.side === "buy" ? "▲ BUY" : "▼ SELL"}</b> <span class="mono" style="color:var(--muted)">${fmt(x.size, 0)}</span></td>
         <td class="mono">${x.opened ? ist(x.opened) : "–"}</td><td class="mono">${px(x.entry)}</td>
-        <td class="mono neg-t">${px(x.sl)}</td><td class="mono pos-t">${px(x.tp)}</td><td>${st}</td>
+        <td class="mono neg-t">${px(x.sl)}${x.status === "open" && x.slNow !== null && x.slNow !== undefined && Math.abs(x.slNow - x.sl) > 1e-9 ? `<div class="slnow">now ${px(x.slNow)}</div>` : ""}</td>
+        <td class="mono pos-t">${x.tp === null || x.tp === undefined ? '<span class="trailtag">trailing</span>' : px(x.tp)}</td><td>${st}</td>
         <td class="mono">${x.status === "open" ? (now ? px(now) : "–") : px(x.exit)}</td>
         <td class="mono">${x.closed ? ist(x.closed) : "–"}</td><td class="mono">${dur(x.opened, x.closed)}</td>
         <td class="mono ${(pnl || 0) >= 0 ? "pos-t" : "neg-t"}">${pnl === null || pnl === undefined ? "–" : money(pnl)}</td>
@@ -858,7 +867,7 @@ function renderJournal() {
     }).join("") + "</tbody>";
   if (S.jSeen && all.some(x => !seen.has(x.tf + x.symbol + x.opened + x.status)))
     all.filter(x => !seen.has(x.tf + x.symbol + x.opened + x.status) && x.status !== "open")
-       .forEach(x => toast(`Paper ${x.tf} · ${x.symbol}`, x.status === "won" ? `✓ Target hit: ${money(x.pnl)}` : `✕ Stop hit: ${money(x.pnl)}`, x.status === "won" ? "buy" : "sell"));
+       .forEach(x => toast(`Paper ${blabel(x.tf)} · ${x.symbol}`, x.hit === "trail" ? `Trailing stop hit: ${money(x.pnl)}` : x.status === "won" ? `✓ Target hit: ${money(x.pnl)}` : `✕ Stop hit: ${money(x.pnl)}`, x.status === "won" ? "buy" : "sell"));
   S.jSeen = new Set(all.map(x => x.tf + x.symbol + x.opened + x.status));
 }
 function downloadCsv(rows) {
@@ -873,7 +882,8 @@ function downloadCsv(rows) {
 
 /* ---------- strategy history (backtest of every past signal, all coins x timeframes) ---------- */
 S.h = null; S.hf = { coin: "all", tf: "all", res: "all", side: "all", year: "all" }; S.hPage = 0;
-const H_PAGE = 50, PER = { "30m": 1800, "1h": 3600, "4h": 14400 };
+const H_PAGE = 50, PER0 = { "30m": 1800, "1h": 3600, "4h": 14400 };
+const PER = new Proxy(PER0, { get: (o, k) => o[resOf(k)] });         // PER["4h-trail"] -> 14400
 async function pullHistory() {
   try {
     const d = await (await fetch("/api/history")).json();
@@ -903,10 +913,10 @@ function renderHistory() {
     : `calculating ${d.done}/${d.total} (downloads ~2.5 years of candles, about 20 s)…`;
   if (d.error) $("hHint").textContent += " · " + d.error;
   // score grid: coins x timeframes
-  let g = `<div></div>` + TFS.map(tf => `<div class="hhead">${tf}${tf === ov.resolution ? ' <span style="color:var(--accent)">★ traded</span>' : " · watch only"}</div>`).join("");
+  let g = `<div></div>` + BOOKS.map(tf => `<div class="hhead">${blabel(tf)}${tf === ov.resolution ? ' <span style="color:var(--accent)">★ traded</span>' : isTrail(tf) ? ' <span class="trailtag">· paper test</span>' : " · watch only"}</div>`).join("");
   for (const sym of ov.symbols) {
     g += `<div class="hrow">${sym.replace("USD", "")}<small class="sub" style="font-weight:500">${sym}</small></div>`;
-    for (const tf of TFS) {
+    for (const tf of BOOKS) {
       const b = hBook(sym, tf), on = S.hf.coin === sym && S.hf.tf === tf;
       if (!b) { g += `<div class="hcell"><div class="hs">${ready ? "no data" : "calculating…"}</div></div>`; continue; }
       const good = (b.ret || 0) > 0;
@@ -918,6 +928,7 @@ function renderHistory() {
     }
   }
   const grid = $("hGrid");
+  grid.style.gridTemplateColumns = `var(--hcol0) repeat(${BOOKS.length}, minmax(0, 1fr))`;
   if (grid.dataset.h !== g) { grid.innerHTML = g; grid.dataset.h = g;
     grid.querySelectorAll(".hcell[data-s]").forEach(el => el.onclick = () => {
       const same = S.hf.coin === el.dataset.s && S.hf.tf === el.dataset.t;
@@ -926,8 +937,8 @@ function renderHistory() {
   const all = hRows(), years = [...new Set(all.map(x => yearOf(x.t0)))].sort();
   $("hFilters").innerHTML =
     hChips("coin", "Coin", [["all", "All"], ...ov.symbols.map(s => [s, s.replace("USD", "")])]) +
-    hChips("tf", "Timeframe", [["all", "All"], ...TFS.map(t => [t, t])]) +
-    hChips("res", "Result", [["all", "All"], ["target", "✓ Target"], ["stop", "✕ Stop"], ["open", "Open"]]) +
+    hChips("tf", "Record", [["all", "All"], ...BOOKS.map(t => [t, blabel(t)])]) +
+    hChips("res", "Result", [["all", "All"], ["target", "✓ Target"], ["trail", "↗ Trail stop"], ["stop", "✕ Stop"], ["open", "Open"]]) +
     hChips("side", "Side", [["all", "All"], ["buy", "▲ Buy"], ["sell", "▼ Sell"]]) +
     hChips("year", "Year", [["all", "All"], ...years.map(y => [String(y), String(y)])]) +
     `<button class="btn-dl" id="hDl">⬇ Download CSV</button>`;
@@ -943,11 +954,12 @@ function renderHistory() {
   $("hTbl").innerHTML = !rows.length ? `<tbody><tr><td class="empty">${ready ? "No trades match these filters." : "Calculating past trades…"}</td></tr></tbody>` :
     `<thead><tr><th>#</th><th>TF</th><th>Coin</th><th>Side</th><th>Signal candle closed (IST)</th><th>Entry</th><th>Stop loss</th><th>Target</th><th>Result</th><th>Exit</th><th>Exit candle (IST)</th><th>Held</th><th>P&L</th><th>R</th><th>Balance</th></tr></thead><tbody>` +
     page.map((x, i) => {
-      const st = x.res === "open" ? `<span class="st open">OPEN</span>` : x.res === "target" ? `<span class="st won">✓ TARGET</span>` : `<span class="st lost">✕ STOP</span>`;
+      const st = x.res === "open" ? `<span class="st open">OPEN</span>` : x.res === "target" ? `<span class="st won">✓ TARGET</span>`
+        : x.res === "trail" ? `<span class="st ${x.pnl > 0 ? "won" : "lost"}">${x.pnl > 0 ? "✓" : "✕"} TRAIL STOP</span>` : `<span class="st lost">✕ STOP</span>`;
       return `<tr data-i="${S.hPage * H_PAGE + i}" title="Click to see this trade on the chart"><td class="mono" style="color:var(--muted)">${rows.length - S.hPage * H_PAGE - i}</td>
-        <td><span class="tfb ${x.tf === ov.resolution ? "traded" : ""}">${x.tf}</span></td><td><b>${x.symbol}</b></td>
+        <td><span class="tfb ${x.tf === ov.resolution ? "traded" : ""} ${isTrail(x.tf) ? "trail" : ""}">${blabel(x.tf)}</span></td><td><b>${x.symbol}</b></td>
         <td class="${x.side === "buy" ? "pos-t" : "neg-t"}"><b>${x.side === "buy" ? "▲ BUY" : "▼ SELL"}</b></td>
-        <td class="mono">${istY(x.t0)}</td><td class="mono">${px(x.entry)}</td><td class="mono neg-t">${px(x.sl)}</td><td class="mono pos-t">${px(x.tp)}</td>
+        <td class="mono">${istY(x.t0)}</td><td class="mono">${px(x.entry)}</td><td class="mono neg-t">${px(x.sl)}</td><td class="mono pos-t">${x.tp === null ? '<span class="trailtag">trailing</span>' : px(x.tp)}</td>
         <td>${st}</td><td class="mono">${x.exit === null ? "–" : px(x.exit)}</td><td class="mono">${x.t1 ? istY(x.t1 + PER[x.tf]) : "–"}</td>
         <td class="mono">${dur(x.t0, x.t1 ? x.t1 + PER[x.tf] : null)}</td>
         <td class="mono ${(x.pnl || 0) >= 0 ? "pos-t" : "neg-t"}">${x.pnl === null ? "–" : money(x.pnl)}</td>
@@ -978,14 +990,14 @@ async function showTrade(x) {
   const ageDays = (Date.now() / 1000 - x.t0) / 86400;
   const need = ageDays < 28 ? "1M" : ageDays < 88 ? "3M" : ageDays < 178 ? "6M" : ageDays < 360 ? "1Y" : ageDays < 725 ? "2Y" : "ALL";
   if (RANGES.indexOf(need) > RANGES.indexOf(S.range)) { S.range = need; storeSet("range", S.range); buildRange(); }
-  S.sym = x.symbol; S.tf = x.tf; buildTf(); renderTickers(); renderMatrix(); renderSide();
+  S.sym = x.symbol; S.tf = resOf(x.tf); buildTf(); renderTickers(); renderMatrix(); renderSide();
   window.scrollTo({ top: $("chartBox").getBoundingClientRect().top + window.scrollY - 140, behavior: "smooth" });
   await loadChart(true);
   const per = PER[x.tf], end = (x.t1 || Date.now() / 1000) + IST;
   chart.timeScale().setVisibleRange({ from: x.t0 + IST - per * 60, to: end + per * 30 });
   for (const [k, c, n] of [["entry", "--neutral", "Past entry"], ["sl", "--down", "Past SL"], ["tp", "--up", "Past target"]])
-    priceLines.push([candleS, candleS.createPriceLine({ price: x[k], color: css(c), lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: n })]);
-  $("ohlc").textContent = `Showing past ${x.side.toUpperCase()} on ${x.symbol} ${x.tf}: entry ${px(x.entry)} at ${istY(x.t0)} IST → ${x.res === "open" ? "still open" : x.res.toUpperCase() + " " + px(x.exit)} · ${S.chartInfo}`;
+    if (x[k] !== null && x[k] !== undefined) priceLines.push([candleS, candleS.createPriceLine({ price: x[k], color: css(c), lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: n })]);
+  $("ohlc").textContent = `Showing past ${x.side.toUpperCase()} on ${x.symbol} ${blabel(x.tf)}: entry ${px(x.entry)} at ${istY(x.t0)} IST → ${x.res === "open" ? "still open" : x.res.toUpperCase() + " " + px(x.exit)} · ${S.chartInfo}`;
 }
 
 /* ---------- signal banners (one per coin, on the timeframe the bot trades) ---------- */
@@ -1093,6 +1105,7 @@ async function pullOverview() {
       S.lastSig[key] = sig;
     }
     S.ov = d;
+    if (d.books) BOOKS = d.books;
     unskel("tickers", "banners", "ticket", "steps", "matrix", "books", "jTbl", "kpis", "tbl");
     const live = d.mode === "LIVE";
     $("modePill").className = "pill" + (live ? " live" : "") + (DEMO ? " demo-pill" : ""); $("modePill").textContent = (DEMO ? "DEMO · " : "") + (live ? "● LIVE TRADING" : "PAPER MODE");

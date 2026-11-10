@@ -52,7 +52,7 @@ def fetch_closed_candles(client, cfg, symbol, bars=400) -> pd.DataFrame:
 
 
 def tag(cfg) -> str:
-    return f"{'PAPER' if cfg.dry_run else 'LIVE'} {cfg.resolution}"
+    return f"{'PAPER' if cfg.dry_run else 'LIVE'} {cfg.book}"
 
 
 def books_for(cfg):
@@ -60,7 +60,12 @@ def books_for(cfg):
     state/paper_state_<tf>.json and logs/paper_trades_<tf>.csv (the dashboard's Paper trades per timeframe)."""
     cfgs = [cfg]
     for tf in cfg.paper_timeframes:
-        pc = dataclasses.replace(cfg, resolution=tf, dry_run=True, paper_timeframes=())
+        pc = dataclasses.replace(cfg, resolution=tf, dry_run=True, paper_timeframes=(), paper_trail_timeframes=())
+        if all(c.state_path != pc.state_path for c in cfgs):
+            cfgs.append(pc)
+    for tf in cfg.paper_trail_timeframes:                       # same signals, trailing-stop exit (paper only)
+        pc = dataclasses.replace(cfg, resolution=tf, dry_run=True, exit_mode="trail", paper_timeframes=(),
+                                 paper_trail_timeframes=())
         if all(c.state_path != pc.state_path for c in cfgs):
             cfgs.append(pc)
     return cfgs
@@ -104,7 +109,7 @@ def panic(client, cfg, markets):
         notifier.send(cfg, f"PANIC executed on {m['symbol']}: {res}")
 
 
-def settle_paper(cfg, risk, m, df):
+def settle_paper(cfg, risk, m, df):          # df = closed candles WITH indicators (trail mode needs atr)
     pos = risk.state.paper_positions.get(m["symbol"])
     if not pos:
         return
@@ -120,7 +125,7 @@ def settle_paper(cfg, risk, m, df):
     log_trade(cfg, dict(time=fmt_t(t), symbol=m["symbol"], event=why, side=pos["side"], size=pos["size"],
                         entry=pos["entry"], sl=pos["sl"], tp=pos["tp"], exit=exit_p, pnl=round(pl, 4),
                         equity=round(risk.state.paper_equity, 2), live=False))
-    notifier.send(cfg, f"PAPER {cfg.resolution} {m['symbol']} {pos['side'].upper()} closed at {why.upper()} {exit_p} "
+    notifier.send(cfg, f"PAPER {cfg.book} {m['symbol']} {pos['side'].upper()} closed at {why.upper()} {exit_p} "
                        f"P&L {pl:+.2f} | paper equity {risk.state.paper_equity:.2f}")
 
 
@@ -140,10 +145,10 @@ def step(client, cfg, risk, m, live_sizes):
         return
     risk.state.last_processed_by[sym] = last_t                  # mark first: never double-trade a candle
     risk.save()
-    if not live:
-        settle_paper(cfg, risk, m, df)
-
     d = add_indicators(df, cfg)
+    if not live:
+        settle_paper(cfg, risk, m, d)
+
     sig = signal_at(d, len(d) - 1, cfg)
     ts = fmt_t(last_t)
     if sig is None:
@@ -177,6 +182,9 @@ def step(client, cfg, risk, m, live_sizes):
 
     entry = float(client.get_ticker(sym).get("mark_price") or df["close"].iloc[-1])
     sl, tp = levels(sig.side, entry, sig.atr, cfg, m["tick"])
+    trail = cfg.exit_mode == "trail"
+    if trail:
+        tp = None                                                # no fixed target: the stop trails after +1R
     size = risk.position_size(equity, entry, sl, m["cval"])
     if size < 1:
         notifier.send(cfg, f"{tag(cfg)} {sym} signal {sig.side} skipped: size < 1 contract (capital too small for this stop).")
@@ -184,14 +192,18 @@ def step(client, cfg, risk, m, live_sizes):
 
     risk_amt = abs(entry - sl) * size * m["cval"]
     msg = (f"{tag(cfg)} {sig.side.upper()} {size} {sym} @~{entry:.2f} "
-           f"SL {sl} TP {tp} (risk ~{risk_amt:.2f}) | {sig.reason}")
+           f"SL {sl} " + (f"TP trailing (after +{cfg.trail_activate_r:g}R, {cfg.trail_atr:g}xATR)" if trail else f"TP {tp}")
+           + f" (risk ~{risk_amt:.2f}) | {sig.reason}")
     notifier.send(cfg, msg)
-    row = dict(time=ts, symbol=sym, event="entry", side=sig.side, size=size, entry=entry, sl=sl, tp=tp,
+    row = dict(time=ts, symbol=sym, event="entry", side=sig.side, size=size, entry=entry, sl=sl, tp="" if trail else tp,
                equity=round(equity, 2), live=live, reason=sig.reason)
 
     if not live:
         risk.state.paper_positions[sym] = dict(side=sig.side, size=size, entry=entry, sl=sl, tp=tp,
                                                cval=m["cval"], checked_until=last_t, opened=ts)
+        if trail:
+            risk.state.paper_positions[sym].update(mode="trail", sl0=sl, dist=abs(entry - sl), best=entry,
+                                                   trail_r=cfg.trail_activate_r, trail_atr=cfg.trail_atr)
         risk.record_trade()
         log_trade(cfg, row)
         return
@@ -248,7 +260,8 @@ def check(client, cfg, markets):
 def status(cfg):
     s = RiskManager(cfg).state
     mode = "PAPER (no real orders)" if cfg.dry_run else f"LIVE on {cfg.env}"
-    print(f"Mode: {mode} | timeframe {cfg.resolution} | coins {', '.join(cfg.symbols)}")
+    print(f"Mode: {mode} | record {cfg.book}" + (" (trailing stop, no fixed target)" if cfg.exit_mode == "trail" else "")
+          + f" | coins {', '.join(cfg.symbols)}")
     print("Bot halted: " + (f"YES - {s.halt_reason}" if s.halted else "no"))
     if cfg.dry_run:
         eq = s.paper_equity or cfg.bot_capital_usd
@@ -256,7 +269,7 @@ def status(cfg):
         if s.paper_positions:
             print("Open paper trades:")
             for sym, p in s.paper_positions.items():
-                print(f"  {sym} {p['side'].upper()} {p['size']} @ {p['entry']:.2f}  SL {p['sl']}  TP {p['tp']}  "
+                print(f"  {sym} {p['side'].upper()} {p['size']} @ {p['entry']:.2f}  SL {p['sl']:.6g}  TP {p['tp'] or 'trailing'}  "
                       f"(opened {p['opened']})")
         else:
             print("Open paper trades: none")
@@ -265,7 +278,7 @@ def status(cfg):
     print(f"Trades today: {s.trades_today}/{cfg.max_trades_per_day}")
     if os.path.exists(cfg.trades_path):
         t = pd.read_csv(cfg.trades_path)
-        ex = t[t["event"].isin(["stop", "target"])]
+        ex = t[t["event"].isin(["stop", "target", "trail"])]
         if len(ex):
             print(f"Closed trades: {len(ex)} | wins {int((ex.pnl > 0).sum())} | losses {int((ex.pnl <= 0).sum())} "
                   f"| net P&L {ex.pnl.sum():+.2f}")
@@ -321,7 +334,7 @@ def main():
             except DeltaError as e:
                 logging.warning("%s: could not set leverage (verify manually in the Delta UI): %s", m["symbol"], e)
             live_sizes[m["symbol"]] = client.position_size(m["pid"])
-    extra = [c.resolution for c, _ in books[1:]]
+    extra = [c.book for c, _ in books[1:]]
     notifier.send(cfg, f"Bot started: {','.join(cfg.symbols)} {tag(cfg)} strategy={cfg.strategy} env={cfg.env}"
                        + (f" | also paper-trading {','.join(extra)}" if extra else ""))
     errors = 0

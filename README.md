@@ -45,6 +45,13 @@ every 20 s ──► has a new 4-hour candle CLOSED?  ──no──► wait
 The idea: trade **with** the trend and enter **after a dip**, not at random. ATR measures how much the coin normally moves,
 so the stop loss sits outside normal noise. It is wider when the market is volatile and tighter when it is calm.
 
+### Trailing-stop test (paper only)
+A second 4h paper record, **"4h trail"**, takes the same signals but has **no fixed target**. Once a trade is +1R in profit,
+the stop follows the price at 2 × ATR behind the best close, and the trade ends when that stop is hit. On 6–7 years of
+Binance data and on Delta's 2.5 years it beat the fixed 1:3 target: BTC+ETH+SOL **+112R vs +38R** on Delta, win rate
+~40% vs ~30%, and the worst losing streak roughly halved. It runs side by side with the normal 4h record so you can compare
+them on live data. Live orders still use the fixed SL + TP bracket. `config.py` refuses the trailing exit when `DRY_RUN=0`.
+
 ### Safety layer
 | Protection | Default | What happens |
 |---|---|---|
@@ -269,6 +276,8 @@ Telegram "Bot started" received · dashboard opens through the SSH tunnel · lap
 | `SYMBOLS` | BTCUSD,ETHUSD | coins to trade (one position each) |
 | `RESOLUTION` | 4h | candle size. Tested on 4h; 1h/2h lost money |
 | `PAPER_TIMEFRAMES` | 30m,1h | extra timeframes paper-traded alongside RESOLUTION, never real orders (`--paper-tf none` to disable) |
+| `PAPER_TRAIL_TIMEFRAMES` | 4h | also paper-trade these with a **trailing stop** instead of the fixed 3R target (paper only) |
+| `TRAIL_ACTIVATE_R` / `TRAIL_ATR` | 1.0 / 2.0 | trailing starts at +1R; the stop follows 2 × ATR behind the best close |
 | `STRATEGY` | pullback | `pullback` or `ema_cross` (old) |
 | `RSI_PULLBACK` | 40 | pullback trigger level (shorts use 100 − this) |
 | `BOT_CAPITAL_USD` | 500 | max capital the bot sizes against |

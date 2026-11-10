@@ -18,7 +18,7 @@ import pandas as pd
 
 from config import load_config
 from risk import RiskManager
-from strategy import add_indicators, levels, signal_at, signals_vectorized
+from strategy import add_indicators, levels, signal_at, signals_vectorized, trail_stop
 
 
 def fetch_history(client, symbol, resolution, period_s, days):
@@ -91,32 +91,40 @@ def simulate_trades(d: pd.DataFrame, cfg, capital: float = 500.0, now: float = N
     sig = signals_vectorized(d, cfg) if sig is None else np.asarray(sig, dtype=int).copy()   # custom rules (research)
     if now is not None:
         sig[(d["time"].to_numpy() + cfg.period_seconds) > now] = 0
-    t, o, h, l, atr = (d[k].to_numpy(dtype=float) for k in ("time", "open", "high", "low", "atr"))
+    t, o, h, l, c, atr = (d[k].to_numpy(dtype=float) for k in ("time", "open", "high", "low", "close", "atr"))
     slip = cfg.slippage_bps / 10000
+    trail = cfg.exit_mode == "trail"
     equity, peak, out, pos, pending = capital, capital, [], None, None
     for j in range(len(d)):
         if pending is not None and pos is None:
             side, a, st = pending
             entry = o[j] * (1 + slip if side == "buy" else 1 - slip)
             sl, tp = levels(side, entry, a, cfg)
+            if trail:
+                tp = None
             risk_amt = equity * cfg.risk_per_trade
             qty = min(risk_amt / abs(entry - sl), equity * cfg.max_leverage / entry)
             pos = dict(side=side, signal_time=int(st), entry_time=int(t[j]), entry=entry, sl=sl, tp=tp, qty=qty,
-                       risk=risk_amt, equity_before=equity)
+                       risk=risk_amt, equity_before=equity, sl0=sl, dist=abs(entry - sl), best=entry)
             pending = None
         if pos is not None:
             long = pos["side"] == "buy"
             hit_sl = l[j] <= pos["sl"] if long else h[j] >= pos["sl"]
-            hit_tp = h[j] >= pos["tp"] if long else l[j] <= pos["tp"]
+            hit_tp = (not trail) and (h[j] >= pos["tp"] if long else l[j] <= pos["tp"])
             if hit_sl or hit_tp:
                 exit_p = pos["sl"] if hit_sl else pos["tp"]
                 pnl = (exit_p - pos["entry"]) * pos["qty"] * (1 if long else -1) \
                     - cfg.fee_rate * pos["qty"] * (pos["entry"] + exit_p)
                 equity += pnl
                 peak = max(peak, equity)
-                out.append({**pos, "exit_time": int(t[j]), "exit": exit_p, "result": "stop" if hit_sl else "target",
+                result = "target" if hit_tp else ("trail" if trail and pos["sl"] != pos["sl0"] else "stop")
+                out.append({**pos, "exit_time": int(t[j]), "exit": exit_p, "result": result,
                             "pnl": pnl, "r": pnl / pos["risk"], "equity": equity, "dd": (peak - equity) / peak})
                 pos = None
+            elif trail:                                   # move the stop at the candle close (used from next candle)
+                pos["best"] = max(pos["best"], c[j]) if long else min(pos["best"], c[j])
+                pos["sl"] = trail_stop(pos["side"], pos["entry"], pos["dist"], pos["best"], pos["sl"], atr[j],
+                                       cfg.trail_activate_r, cfg.trail_atr)
         if pos is None and pending is None and sig[j]:
             pending = ("buy" if sig[j] > 0 else "sell", atr[j], t[j])
     if pos is not None:

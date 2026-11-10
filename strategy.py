@@ -119,6 +119,18 @@ def levels(side: str, entry: float, atr: float, cfg, tick: float = 0.0):
     return round_tick(sl, tick), round_tick(tp, tick)
 
 
+def trail_stop(side: str, entry: float, dist: float, best: float, sl: float, atr: float,
+               activate_r: float, trail_atr: float) -> float:
+    """Trailing-stop rule (paper bot + backtest share it). Called at a candle CLOSE with the best close so far:
+    once the best close is >= activate_r x the initial stop distance in profit, the stop follows trail_atr x ATR
+    behind it. The stop only ever moves in the trade's favour."""
+    d = 1 if side == "buy" else -1
+    if (best - entry) * d >= activate_r * dist:
+        new = best - d * trail_atr * atr
+        sl = max(sl, new) if d > 0 else min(sl, new)
+    return sl
+
+
 def signals_vectorized(d: pd.DataFrame, cfg) -> np.ndarray:
     """Same rules as signal_at() for every row at once (+1 buy, -1 sell, 0 none). Used by the dashboard to draw
     years of past signals quickly. tests/test_core.py checks it matches signal_at() exactly."""

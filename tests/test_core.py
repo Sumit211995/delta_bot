@@ -170,3 +170,37 @@ def test_fast_simulator_matches_backtest():
         for a, (_, b) in zip(fast, ref.iterrows()):
             assert a["entry_time"] == b.entry_time and a["exit_time"] == b.exit_time and a["side"] == b.side
             assert abs(a["pnl"] - b.pnl) < 1e-9 and abs(a["equity"] - b.equity) < 1e-6
+
+
+def test_paper_trailing_stop_matches_backtest():
+    """The live paper engine (paper.settle, candle by candle) must exit exactly where the backtest does."""
+    import dataclasses
+    import paper
+    from backtest import simulate_trades
+    cfg = Config(resolution="1h", exit_mode="trail", slippage_bps=0.0, trail_activate_r=1.0, trail_atr=2.0)
+    for seed in (4, 5):
+        d = add_indicators(synthetic(4000, seed), cfg)
+        trades = [x for x in simulate_trades(d, cfg) if x["result"] != "open"]
+        assert len(trades) > 10 and any(x["result"] == "trail" for x in trades)
+        assert all(x["tp"] is None for x in trades)
+        for x in trades:
+            pos = dict(side=x["side"], entry=x["entry"], sl=x["sl0"], sl0=x["sl0"], dist=x["dist"], best=x["entry"],
+                       mode="trail", trail_r=1.0, trail_atr=2.0, checked_until=x["signal_time"], size=1, cval=1)
+            hit = paper.settle(pos, d)
+            assert hit is not None
+            assert abs(hit[0] - x["exit"]) < 1e-9 and hit[1] == x["exit_time"] and hit[2] == x["result"]
+
+
+def test_trailing_book_is_paper_only():
+    import pytest
+    from bot import books_for
+    from config import validate
+    cfg = Config(dry_run=False, env="testnet", api_key="k", api_secret="s", resolution="4h",
+                 paper_timeframes=("1h",), paper_trail_timeframes=("4h",))
+    books = books_for(cfg)
+    assert [c.book for c in books] == ["4h", "1h", "4h-trail"]
+    assert [c.dry_run for c in books] == [False, True, True]
+    assert books[2].state_path == "state/paper_state_4h-trail.json"
+    import dataclasses
+    with pytest.raises(SystemExit):
+        validate(dataclasses.replace(cfg, exit_mode="trail"))      # never live with the trailing exit (yet)

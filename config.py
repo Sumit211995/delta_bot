@@ -36,6 +36,10 @@ class Config:
     symbols: tuple = ("BTCUSD",)
     resolution: str = "4h"
     paper_timeframes: tuple = ()             # extra timeframes paper-traded alongside RESOLUTION (never real orders)
+    paper_trail_timeframes: tuple = ()       # timeframes ALSO paper-traded with a trailing stop instead of a fixed target
+    exit_mode: str = "fixed"                  # fixed = SL + TP (bracket) | trail = SL only, trails after +TRAIL_ACTIVATE_R
+    trail_activate_r: float = 1.0             # start trailing once the trade is this many R in profit (on a close)
+    trail_atr: float = 2.0                    # trailing distance: this many ATRs behind the best close
     strategy: str = "pullback"                # pullback | ema_cross
     rsi_pullback: float = 40.0
     bot_capital_usd: float = 500.0
@@ -61,15 +65,20 @@ class Config:
     log_dir: str = "logs"
 
     @property
+    def book(self) -> str:
+        """Name of this paper record: '4h', '1h', ... or '4h-trail' for the trailing-stop variant."""
+        return self.resolution + ("-trail" if self.exit_mode == "trail" else "")
+
+    @property
     def state_path(self) -> str:
-        """Live has ONE state file. Paper keeps one per timeframe so 30m/1h/4h can be compared side by side."""
+        """Live has ONE state file. Paper keeps one per book so 30m/1h/4h/4h-trail can be compared side by side."""
         if self.state_file:
             return self.state_file
-        return f"state/paper_state_{self.resolution}.json" if self.dry_run else "state/risk_state.json"
+        return f"state/paper_state_{self.book}.json" if self.dry_run else "state/risk_state.json"
 
     @property
     def trades_path(self) -> str:
-        return f"{self.log_dir}/paper_trades_{self.resolution}.csv" if self.dry_run else f"{self.log_dir}/trades.csv"
+        return f"{self.log_dir}/paper_trades_{self.book}.csv" if self.dry_run else f"{self.log_dir}/trades.csv"
 
     @property
     def base_url(self) -> str:
@@ -97,6 +106,9 @@ def load_config() -> Config:
         symbols=symbols,
         resolution=g("RESOLUTION", "4h"),
         paper_timeframes=tuple(x.strip() for x in g("PAPER_TIMEFRAMES", "").split(",") if x.strip()),
+        paper_trail_timeframes=tuple(x.strip() for x in g("PAPER_TRAIL_TIMEFRAMES", "").split(",") if x.strip()),
+        trail_activate_r=float(g("TRAIL_ACTIVATE_R", "1.0")),
+        trail_atr=float(g("TRAIL_ATR", "2.0")),
         strategy=g("STRATEGY", "pullback").lower(),
         rsi_pullback=float(g("RSI_PULLBACK", "40")),
         bot_capital_usd=float(g("BOT_CAPITAL_USD", "500")),
@@ -121,9 +133,15 @@ def validate(cfg: Config) -> None:
         raise SystemExit("DELTA_ENV must be 'testnet' or 'live'")
     if cfg.resolution not in RESOLUTION_SECONDS:
         raise SystemExit(f"RESOLUTION must be one of {list(RESOLUTION_SECONDS)}")
-    bad = [tf for tf in cfg.paper_timeframes if tf not in RESOLUTION_SECONDS]
+    if cfg.exit_mode not in ("fixed", "trail"):
+        raise SystemExit("exit_mode must be 'fixed' or 'trail'")
+    if cfg.exit_mode == "trail" and not cfg.dry_run:
+        raise SystemExit("The trailing-stop exit is PAPER ONLY for now (live orders use a fixed SL + TP bracket)")
+    if cfg.trail_activate_r < 0 or cfg.trail_atr <= 0:
+        raise SystemExit("TRAIL_ACTIVATE_R must be >= 0 and TRAIL_ATR > 0")
+    bad = [tf for tf in cfg.paper_timeframes + cfg.paper_trail_timeframes if tf not in RESOLUTION_SECONDS]
     if bad:
-        raise SystemExit(f"PAPER_TIMEFRAMES has unknown timeframe(s) {bad}; use {list(RESOLUTION_SECONDS)}")
+        raise SystemExit(f"PAPER_TIMEFRAMES / PAPER_TRAIL_TIMEFRAMES has unknown timeframe(s) {bad}; use {list(RESOLUTION_SECONDS)}")
     if cfg.strategy not in ("pullback", "ema_cross"):
         raise SystemExit("STRATEGY must be 'pullback' or 'ema_cross'")
     if not cfg.symbols:

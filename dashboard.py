@@ -191,6 +191,18 @@ def read_trades(path, source):
     return rows
 
 
+def book_cfgs():
+    """Every paper record: one per timeframe (fixed SL + TP) plus trailing-stop variants (PAPER_TRAIL_TIMEFRAMES)."""
+    out = [(tf, dataclasses.replace(CFG, resolution=tf, dry_run=True, state_file="", exit_mode="fixed")) for tf in TIMEFRAMES]
+    out += [(f"{tf}-trail", dataclasses.replace(CFG, resolution=tf, dry_run=True, state_file="", exit_mode="trail"))
+            for tf in CFG.paper_trail_timeframes if tf in TIMEFRAMES]
+    return out
+
+
+def book_label(book):
+    return book.replace("-trail", " trail")
+
+
 def utc_epoch(text):
     try:
         return int(pd.Timestamp(str(text).replace(" UTC", ""), tz="UTC").timestamp())
@@ -198,14 +210,14 @@ def utc_epoch(text):
         return None
 
 
-def journal(cfg, tf):
+def journal(cfg, book):
     """Pair each paper 'entry' row with its 'stop'/'target' row -> one record per trade (full history, oldest first).
     The CSV logs the signal candle's open time; the bot enters when that candle CLOSES, so opened = time + period.
     An exit row's time is the candle in which the SL/TP was hit."""
     if not os.path.exists(cfg.trades_path):
         return []
     rows = pd.read_csv(cfg.trades_path).replace({np.nan: None}).to_dict("records")
-    period, open_by_sym, out = RESOLUTION_SECONDS[tf], {}, []
+    period, open_by_sym, out, tf = cfg.period_seconds, {}, [], book
     for r in rows:
         sym, ev = r.get("symbol"), r.get("event")
         if ev == "entry":
@@ -216,7 +228,7 @@ def journal(cfg, tf):
                        equity_before=num(r.get("equity")))
             open_by_sym[sym] = rec
             out.append(rec)
-        elif ev in ("stop", "target"):
+        elif ev in ("stop", "target", "trail"):
             rec = open_by_sym.pop(sym, None)
             if rec is None:                                   # exit without a logged entry: keep it visible anyway
                 rec = dict(tf=tf, symbol=sym, side=r.get("side"), size=num(r.get("size"), 0), entry=num(r.get("entry"), 6),
@@ -235,12 +247,11 @@ def journal(cfg, tf):
 
 def paper_books():
     books = []
-    for tf in TIMEFRAMES:
-        cfg = dataclasses.replace(CFG, resolution=tf, dry_run=True, state_file="")
+    for tf, cfg in book_cfgs():
         if not os.path.exists(cfg.state_path) and not os.path.exists(cfg.trades_path):
             continue
         s = RiskManager(cfg).state
-        trades = read_trades(cfg.trades_path, f"Paper {tf}")
+        trades = read_trades(cfg.trades_path, f"Paper {book_label(tf)}")
         jr = journal(cfg, tf)
         closed = [x for x in jr if x["status"] != "open"]
         wins = sum(1 for x in closed if x["status"] == "won")
@@ -253,10 +264,11 @@ def paper_books():
         rs = [x["r"] for x in closed if x.get("r") is not None]
         positions = []
         for sym, p in s.paper_positions.items():
-            positions.append(dict(source=f"Paper {tf}", symbol=sym, side=p["side"], size=p["size"], cval=p["cval"],
-                                  entry=num(p["entry"]), sl=p["sl"], tp=p["tp"], mark=num(mark_price(sym)),
+            positions.append(dict(source=f"Paper {book_label(tf)}", symbol=sym, side=p["side"], size=p["size"],
+                                  cval=p["cval"], entry=num(p["entry"]), sl=num(p["sl"], 6), tp=p["tp"],
+                                  sl0=num(p.get("sl0"), 6), trail=p.get("mode") == "trail", mark=num(mark_price(sym)),
                                   opened=p.get("opened")))
-        books.append(dict(tf=tf, equity=num(eq), start=CFG.bot_capital_usd, positions=positions, trades=trades,
+        books.append(dict(tf=tf, res=cfg.resolution, mode=cfg.exit_mode, label=book_label(tf), equity=num(eq), start=CFG.bot_capital_usd, positions=positions, trades=trades,
                           journal=jr, wins=wins, losses=len(closed) - wins, closed=len(closed),
                           win_rate=num(100 * wins / len(closed), 1) if closed else None,
                           net=num(sum((x["pnl"] or 0) for x in closed)), avg_r=num(sum(rs) / len(rs), 2) if rs else None,
@@ -315,7 +327,8 @@ def overview():
                 errors.append(f"{sym} {tf}: {e}")
     return dict(generated=int(time.time()), mode="PAPER" if CFG.dry_run else "LIVE", env=CFG.env,
                 strategy=CFG.strategy, resolution=CFG.resolution, symbols=list(CFG.symbols),
-                paper_timeframes=list(CFG.paper_timeframes), capital=CFG.bot_capital_usd, risk=CFG.risk_per_trade, atr_mult=CFG.atr_stop_mult, rr=CFG.reward_risk,
+                paper_timeframes=list(CFG.paper_timeframes), books=[b for b, _ in book_cfgs()],
+                trail=dict(activate_r=CFG.trail_activate_r, atr=CFG.trail_atr), capital=CFG.bot_capital_usd, risk=CFG.risk_per_trade, atr_mult=CFG.atr_stop_mult, rr=CFG.reward_risk,
                 rsi_level=CFG.rsi_pullback, max_trades=CFG.max_trades_per_day, daily_loss=CFG.daily_loss_limit,
                 cards=cards, paper=paper_books(), live=live_account(),
                 live_trades=read_trades(f"{CFG.log_dir}/trades.csv", "LIVE"), errors=errors)
@@ -370,10 +383,10 @@ def chart(sym, tf, rng="3M"):
     markers = [dict(time=int(t), side="buy" if v > 0 else "sell") for t, v in zip(view["time"], sig) if v]
     lines = []
     for b in paper_books():
-        if b["tf"] == tf:
+        if b["res"] == tf:
             for p in b["positions"]:
                 if p["symbol"] == sym:
-                    lines.append(dict(label=f"Paper {tf}", entry=p["entry"], sl=p["sl"], tp=p["tp"]))
+                    lines.append(dict(label=f"Paper {b['label']}", entry=p["entry"], sl=p["sl"], tp=p["tp"]))
     for p in live_account().get("positions", []):
         if p["symbol"] == sym:
             lines.append(dict(label="Delta", entry=p["entry"], sl=p["sl"], tp=p["tp"]))
@@ -393,9 +406,10 @@ _hist = dict(state="idle", done=0, total=0, books={}, updated=None, error=None)
 _hist_lock = threading.Lock()
 
 
-def _hist_book(sym, tf):
+def _hist_book(sym, book):
     from backtest import simulate_trades
-    cfg = tf_cfg(tf)
+    tf = book.split("-")[0]
+    cfg = dataclasses.replace(tf_cfg(tf), exit_mode="trail" if book.endswith("-trail") else "fixed")
     recent = series(sym, tf)["live"][["time", "open", "high", "low", "close", "volume"]]
     raw = pd.concat([history(sym, tf, HIST_DAYS), recent]).drop_duplicates("time", keep="last").sort_values("time")
     d = add_indicators(raw.reset_index(drop=True), cfg)
@@ -405,7 +419,7 @@ def _hist_book(sym, tf):
     rows = []
     for x in trades:
         rows.append(dict(side=x["side"], sig=x["signal_time"], t0=x["entry_time"], entry=num(x["entry"], 6),
-                         sl=num(x["sl"], 6), tp=num(x["tp"], 6), t1=x["exit_time"], exit=num(x["exit"], 6),
+                         sl=num(x["sl0"], 6), slx=num(x["sl"], 6), tp=num(x["tp"], 6), t1=x["exit_time"], exit=num(x["exit"], 6),
                          res=x["result"], pnl=num(x["pnl"]), r=num(x["r"]), eq=num(x["equity"]),
                          ct=num(x["qty"] / cval, 1), risk=num(x["risk"])))
     closed = [x for x in trades if x["result"] != "open"]
@@ -417,7 +431,7 @@ def _hist_book(sym, tf):
         b = years.setdefault(y, dict(n=0, w=0, pnl=0.0))
         b["n"] += 1; b["w"] += int(x["pnl"] > 0); b["pnl"] += float(x["pnl"])
     end_eq = closed[-1]["equity"] if closed else cap
-    return dict(symbol=sym, tf=tf, first=int(d["time"].iloc[0]), last=int(d["time"].iloc[-1]), candles=len(d),
+    return dict(symbol=sym, tf=book, res=tf, mode=cfg.exit_mode, label=book_label(book), first=int(d["time"].iloc[0]), last=int(d["time"].iloc[-1]), candles=len(d),
                 trades=rows, n=len(closed), wins=len(wins), win_rate=num(100 * len(wins) / len(closed), 1) if closed else None,
                 pf=num(gp / gl) if gl else None, net=num(end_eq - cap), ret=num(100 * (end_eq / cap - 1), 1),
                 max_dd=num(100 * max([x["dd"] for x in closed] or [0]), 1),
@@ -427,7 +441,7 @@ def _hist_book(sym, tf):
 
 
 def _hist_run():
-    jobs = [(s, tf) for s in CFG.symbols for tf in TIMEFRAMES]
+    jobs = [(s, b) for s in CFG.symbols for b, _ in book_cfgs()]
     with _hist_lock:
         _hist.update(state="running", done=0, total=len(jobs), error=None)
     for s, tf in jobs:                                         # one at a time: be gentle with Delta's API
@@ -453,7 +467,7 @@ def strategy_history():
     if stale:
         threading.Thread(target=_hist_run, daemon=True).start()
     with _hist_lock:
-        return dict(state=_hist["state"], done=_hist["done"], total=_hist["total"] or len(CFG.symbols) * len(TIMEFRAMES),
+        return dict(state=_hist["state"], done=_hist["done"], total=_hist["total"] or len(CFG.symbols) * len(book_cfgs()),
                     updated=_hist["updated"], error=_hist["error"], capital=CFG.bot_capital_usd,
                     risk=CFG.risk_per_trade, fee=CFG.fee_rate, slippage_bps=CFG.slippage_bps,
                     books=list(_hist["books"].values()))

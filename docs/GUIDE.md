@@ -252,6 +252,7 @@ with live data before trusting any timeframe with real money.
 | **4h ★** | every 4 hours | paper now (live later if you choose) | `state/paper_state_4h.json`, `logs/paper_trades_4h.csv` |
 | **1h** | every hour | **paper only, always** | `state/paper_state_1h.json`, `logs/paper_trades_1h.csv` |
 | **30m** | every 30 minutes | **paper only, always** | `state/paper_state_30m.json`, `logs/paper_trades_30m.csv` |
+| **4h trail** | every 4 hours | **paper only, always**: same signals, trailing stop instead of a fixed target | `state/paper_state_4h-trail.json`, `logs/paper_trades_4h-trail.csv` |
 
 - Each timeframe starts with its own **$500** paper balance (`BOT_CAPITAL_USD`) and its own limits.
 - `PAPER_TIMEFRAMES=30m,1h` in `.env` controls the extra timeframes. Even when 4h goes live, these stay paper-only.
@@ -260,6 +261,26 @@ with live data before trusting any timeframe with real money.
   choice, same as the backtest).
 - **P&L includes fees:** 0.06% of the trade value on entry and on exit (0.05% Delta taker fee + 18% GST).
 - **Entry price** = the mark price at the moment the candle closed, which is close to what a real market order would get.
+
+### 7.1 The trailing-stop test (4h trail)
+
+Long-history testing (Binance, 2019–2026, 10 coins, plus Delta 2023–2026) found one exit that clearly beat the fixed 1:3
+target: **a trailing stop**. The "4h trail" record takes exactly the same signals as 4h, but:
+
+- **Stop loss at entry:** the same 1.5 × ATR.
+- **Target:** none.
+- **Once the trade is +1R in profit:** after each closed 4h candle, the stop moves to 2 × ATR behind the best close so far.
+  It only ever moves in the trade's favour.
+- **Exit:** when the stop is hit. The journal shows **✕ STOP** (the initial stop, −1R) or **✓/✕ TRAIL STOP** (the moved stop).
+
+| BTC+ETH+SOL, 4h | Fixed 1:3 | Trailing stop |
+|---|---|---|
+| Delta 2023–2026 | +38R · win 30% | **+112R · win 40%** |
+| Binance 2019–2026 | +102R · worst streak 21 | **+195R · worst streak 11** |
+
+It is **paper only**: real orders still use the fixed SL + TP bracket, and the config refuses the trailing exit in live
+mode. Moving a real stop order on Delta after every candle needs extra live code and testing. Compare the two 4h records
+for a few weeks first.
 
 ---
 
@@ -450,6 +471,8 @@ Run these in the project folder (`cd ~/Documents/Project/delta_bot`):
 | `SYMBOLS` | `BTCUSD,ETHUSD,SOLUSD` | Coins to trade, comma separated |
 | `RESOLUTION` | `4h` | Main timeframe (the tested one) |
 | `PAPER_TIMEFRAMES` | `30m,1h` | Extra timeframes, paper only |
+| `PAPER_TRAIL_TIMEFRAMES` | `4h` | Also paper-trade with a trailing stop (no fixed target) |
+| `TRAIL_ACTIVATE_R` / `TRAIL_ATR` | `1.0` / `2.0` | Trailing starts at +1R, stop 2 × ATR behind the best close |
 | `STRATEGY` | `pullback` | `pullback` (default) or `ema_cross` (old, loses money) |
 | `RSI_PULLBACK` | `40` | Buy level (sell level = 100 − this = 60) |
 | `ATR_STOP_MULT` | `1.5` | Stop distance in ATRs |
