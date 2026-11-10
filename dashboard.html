@@ -446,6 +446,7 @@ footer .sig b { color: var(--accent); font-weight: 700; }
 
   <div class="panel section" style="--i:8" id="histPanel">
     <div class="ph"><h2>Strategy history · every past trade</h2><span class="hint" id="hHint">simulated on all available Delta data · loading…</span></div>
+    <div class="filters" id="hSrc"></div>
     <div class="hprog" id="hProg"><i style="width:0%"></i></div>
     <div id="hCmp"></div>
     <div class="hgrid" id="hGrid"></div>
@@ -902,13 +903,35 @@ function downloadCsv(rows) {
 S.h = null; S.hf = { view: "list", coin: "all", tf: "all", res: "all", side: "all", year: "all" }; S.hPage = 0;
 const H_PAGE = 50, PER0 = { "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400 };
 const PER = new Proxy(PER0, { get: (o, k) => o[resOf(k)] });         // PER["4h-trail"] -> 14400
+S.hsrc = (new URLSearchParams(location.search).get("hsrc") || storeGet("hsrc")) === "binance" ? "binance" : "delta"; S.hc = {}; S.hTimer = null;
+const SRC = { delta: { label: "Delta (≈2.5 years)", short: "Delta's own candles", wait: "replays ~2.5 years of Delta candles, about 20 s" },
+  binance: { label: "Long history · Binance (2019 →)", short: "Binance perpetual candles since 2019 (research only; the bot trades on Delta prices)",
+    wait: "first time downloads ~6–7 years of candles from Binance's free API, about 2–4 min; later only new candles" } };
+function renderSrc() {
+  $("hSrc").innerHTML = `<span class="lbl">Data</span><span class="fchips">` + Object.entries(SRC).map(([k, v]) =>
+    `<button data-src="${k}" class="${S.hsrc === k ? "on" : ""}">${v.label}</button>`).join("") + `</span>`;
+  $("hSrc").querySelectorAll("button").forEach(b => b.onclick = () => setHistSrc(b.dataset.src));
+}
+function setHistSrc(src) {
+  if (src === S.hsrc) return;
+  S.hsrc = src; storeSet("hsrc", src); S.hPage = 0; renderSrc();
+  S.h = S.hc[src] || null;
+  if (!S.h || !S.h.books.length) {                          // nothing for this source yet: shimmer until it arrives
+    skel("hGrid", 3, 110, { full: true, note: "Loading " + SRC[src].label + "…" }); skel("hTbl", 8); skel("hCmp", 1, 150);
+    $("hFilters").innerHTML = ""; $("hPager").innerHTML = ""; $("hNote").innerHTML = "";
+    $("hGrid").dataset.h = ""; $("hProg").style.display = ""; $("hHint").textContent = "loading…";
+  } else renderHistory();
+  clearTimeout(S.hTimer); pullHistory();
+}
 async function pullHistory() {
+  const src = S.hsrc;
   try {
-    const d = await (await fetch("/api/history")).json();
+    const d = await (await fetch(`/api/history?src=${src}`)).json();
     if (d.error && !d.books) throw new Error(d.error);
-    S.h = d; renderHistory();
-    setTimeout(pullHistory, d.state === "ready" ? 600000 : 3000);
-  } catch (e) { $("hHint").textContent = "Could not load history: " + e.message; setTimeout(pullHistory, 15000); }
+    S.hc[src] = d;
+    if (src === S.hsrc) { S.h = d; renderHistory(); }
+    clearTimeout(S.hTimer); S.hTimer = setTimeout(pullHistory, d.state === "ready" ? 600000 : 3000);
+  } catch (e) { $("hHint").textContent = "Could not load history: " + e.message; clearTimeout(S.hTimer); S.hTimer = setTimeout(pullHistory, 15000); }
 }
 function hBook(sym, tf) { return S.h && S.h.books.find(b => b.symbol === sym && b.tf === tf); }
 function hRows() {
@@ -921,14 +944,16 @@ function renderHistory() {
   const d = S.h, ov = S.ov; if (!d || !ov) return;
   const ready = d.state === "ready";
   if (!d.books.length && !ready) {                         // nothing calculated yet: keep the shimmer, update progress only
+    $("hProg").style.display = "";
     $("hProg").firstElementChild.style.width = (d.total ? d.done / d.total * 100 : 0) + "%";
-    $("hHint").textContent = `calculating ${d.done}/${d.total} (downloads ~2.5 years of candles, about 20 s)…`;
+    $("hHint").textContent = `calculating ${d.done}/${d.total}${d.note ? " · " + d.note : ""} (${SRC[d.src || "delta"].wait})…`;
     return;
   }
   $("hProg").style.display = ready ? "none" : "";
   $("hProg").firstElementChild.style.width = (d.total ? d.done / d.total * 100 : 0) + "%";
-  $("hHint").textContent = ready ? `simulated · start $${fmt(d.capital, 0)} per coin/timeframe · ${(d.risk * 100).toFixed(1)}% risk · fees ${(d.fee * 100).toFixed(2)}%/side + slippage · click a card to filter, a row to see it on the chart`
-    : `calculating ${d.done}/${d.total} (downloads ~2.5 years of candles, about 20 s)…`;
+  const sx = SRC[d.src || "delta"];
+  $("hHint").textContent = ready ? `${sx.short} · start $${fmt(d.capital, 0)} per coin/timeframe · ${(d.risk * 100).toFixed(1)}% risk · fees ${(d.fee * 100).toFixed(2)}%/side + slippage · click a card to filter, a row to see it on the chart`
+    : `calculating ${d.done}/${d.total}${d.note ? " · " + d.note : ""} (${sx.wait})…`;
   if (d.error) $("hHint").textContent += " · " + d.error;
   // score grid: coins x timeframes
   let g = `<div></div>` + HBOOKS.map(tf => `<div class="hhead">${blabel(tf)}${tf === ov.resolution ? ' <span style="color:var(--accent)">★ traded</span>' : isTrail(tf) ? ' <span class="trailtag">· paper test</span>' : " · watch only"}</div>`).join("");
@@ -1092,7 +1117,7 @@ function renderCompare() {
       <td class="mono ${x.R >= 0 ? "pos-t" : "neg-t"}">${x.R >= 0 ? "+" : "−"}₹${Math.round(Math.abs(x.R) * 100).toLocaleString("en-IN")}</td>
       ${cell(x, "worst", x.worst + " losses", false)}${cell(x, "dd", fmt(x.dd, 1) + "%", false)}<td class="mono">+${x.best.toFixed(1)}R</td></tr>`).join("") +
     `</tbody></table></div>
-    <div class="cmpnote">Simulated on Delta's own candles with fees + slippage, $${fmt(d.capital, 0)} per coin at ${(d.risk * 100).toFixed(1)}% risk per trade (compounding).
+    <div class="cmpnote">Simulated on ${SRC[d.src || "delta"].short} with fees + slippage, $${fmt(d.capital, 0)} per coin at ${(d.risk * 100).toFixed(1)}% risk per trade (compounding).
       "At ₹100 risk / trade" = total R × ₹100 (no compounding). Green = best in that column. Past results; the future can differ.</div>`;
 }
 
@@ -1110,6 +1135,11 @@ function downloadHist(rows) {
 }
 async function showTrade(x) {
   const ageDays = (Date.now() / 1000 - x.t0) / 86400;
+  const deltaFirst = Math.min(...((S.hc.delta && S.hc.delta.books.length) ? S.hc.delta.books.map(b => b.first) : [Date.now() / 1000 - 1050 * 86400]));
+  if (S.hsrc === "binance" && x.t0 < deltaFirst + 30 * 86400) {
+    toast("Chart", `This trade (${istY(x.t0)}) is older than Delta's history. The chart shows Delta prices only, so it can't be drawn there.`, "");
+    return;
+  }
   const need = ageDays < 28 ? "1M" : ageDays < 88 ? "3M" : ageDays < 178 ? "6M" : ageDays < 360 ? "1Y" : ageDays < 725 ? "2Y" : "ALL";
   if (RANGES.indexOf(need) > RANGES.indexOf(S.range)) { S.range = need; storeSet("range", S.range); buildRange(); }
   S.sym = x.symbol; S.tf = resOf(x.tf); buildTf(); renderTickers(); renderMatrix(); renderSide();
@@ -1289,6 +1319,7 @@ skel("kpis", 7, 74); skel("tbl", 3); skel("hGrid", 3, 110, { full: true, note: "
 if ($("yr")) $("yr").textContent = new Date().getFullYear();
 
 initCharts();
+renderSrc();
 pullOverview().then(() => { pullLive(); pullHistory(); });
 setInterval(pullLive, 2000);
 setInterval(pullOverview, 10000);

@@ -211,3 +211,9 @@ def test_delta_requests_use_ipv4_for_the_whitelist():
     import urllib3.util.connection as c
     import delta_client  # noqa: F401  (importing applies the IPv4 setting)
     assert c.allowed_gai_family() == socket.AF_INET
+
+
+def test_binance_history_is_research_only_symbol_map():
+    import dashboard
+    assert dashboard.binance_symbol("BTCUSD") == "BTCUSDT" and dashboard.binance_symbol("SOLUSD") == "SOLUSDT"
+    assert "binance" not in open(Path(__file__).resolve().parent.parent / "bot.py").read().lower()   # bot never uses it

@@ -427,16 +427,72 @@ def chart(sym, tf, rng="3M"):
 
 # ---------------------------------------------------------------- strategy history (every past trade, all timeframes)
 HIST_DAYS = 1100                      # Delta keeps ~2.5 years of candles; ask for a bit more
-_hist = dict(state="idle", done=0, total=0, books={}, updated=None, error=None)
+SOURCES = ("delta", "binance")
+_hist = {src: dict(state="idle", done=0, total=0, books={}, updated=None, error=None, note=None) for src in SOURCES}
 _hist_lock = threading.Lock()
 
+# ------------------------------------------------------------- Binance long history (research only, never for trading)
+BINANCE = "https://fapi.binance.com/fapi/v1/klines"     # free public API: USDT-margined perpetuals, no account/key
+BINANCE_START = 1567296000                               # 2019-09-01 (first Binance perpetuals)
+BINANCE_DIR = HERE / "data" / "binance"                  # cached on disk (git-ignored); later runs fetch only new candles
+_bn_lock = threading.Lock()
 
-def _hist_book(sym, book):
+
+def binance_symbol(sym):
+    return sym[:-3] + "USDT" if sym.endswith("USD") else sym
+
+
+def binance_candles(sym, tf, progress=None):
+    """Closed + forming candles from Binance since 2019, cached in data/binance/<SYM>_<tf>.pkl and topped up."""
+    import requests
+    per = RESOLUTION_SECONDS[tf]
+    path = BINANCE_DIR / f"{binance_symbol(sym)}_{tf}.pkl"
+    with _bn_lock:
+        cached_df = pd.read_pickle(path) if path.exists() else None
+        start = int(cached_df["time"].iloc[-2]) if cached_df is not None and len(cached_df) > 2 else BINANCE_START
+        rows, cur = [], start * 1000
+        while True:
+            for attempt in range(4):
+                try:
+                    r = requests.get(BINANCE, params=dict(symbol=binance_symbol(sym), interval=tf, startTime=cur, limit=1500),
+                                     timeout=20)
+                    if r.status_code in (418, 429):          # rate limited: back off
+                        time.sleep(30)
+                        continue
+                    r.raise_for_status()
+                    part = r.json()
+                    break
+                except Exception:
+                    if attempt == 3:
+                        raise
+                    time.sleep(3)
+            if not part:
+                break
+            rows += part
+            cur = part[-1][0] + per * 1000
+            if progress:
+                progress(len(rows))
+            if len(part) < 1500:
+                break
+            time.sleep(0.35)                                # ~170 requests/min, far below Binance's limit
+        new = pd.DataFrame([r[:6] for r in rows], columns=["time", "open", "high", "low", "close", "volume"]).astype(float)
+        new["time"] = (new["time"] // 1000)
+        df = new if cached_df is None else pd.concat([cached_df, new])
+        df = df.drop_duplicates("time", keep="last").sort_values("time").reset_index(drop=True)
+        BINANCE_DIR.mkdir(parents=True, exist_ok=True)
+        df.to_pickle(path)
+        return df
+
+
+def _hist_book(sym, book, src="delta"):
     from backtest import simulate_trades
     tf = book.split("-")[0]
     cfg = dataclasses.replace(tf_cfg(tf), exit_mode="trail" if book.endswith("-trail") else "fixed")
-    recent = series(sym, tf)["live"][["time", "open", "high", "low", "close", "volume"]]
-    raw = pd.concat([history(sym, tf, HIST_DAYS), recent]).drop_duplicates("time", keep="last").sort_values("time")
+    if src == "binance":
+        raw = binance_candles(sym, tf)
+    else:
+        recent = series(sym, tf)["live"][["time", "open", "high", "low", "close", "volume"]]
+        raw = pd.concat([history(sym, tf, HIST_DAYS), recent]).drop_duplicates("time", keep="last").sort_values("time")
     d = add_indicators(raw.reset_index(drop=True), cfg)
     cap = CFG.bot_capital_usd
     trades = simulate_trades(d, cfg, capital=cap, now=time.time())
@@ -456,7 +512,8 @@ def _hist_book(sym, book):
         b = years.setdefault(y, dict(n=0, w=0, pnl=0.0))
         b["n"] += 1; b["w"] += int(x["pnl"] > 0); b["pnl"] += float(x["pnl"])
     end_eq = closed[-1]["equity"] if closed else cap
-    return dict(symbol=sym, tf=book, res=tf, mode=cfg.exit_mode, label=book_label(book), first=int(d["time"].iloc[0]), last=int(d["time"].iloc[-1]), candles=len(d),
+    return dict(symbol=sym, tf=book, res=tf, mode=cfg.exit_mode, label=book_label(book), src=src,
+                first=int(d["time"].iloc[0]), last=int(d["time"].iloc[-1]), candles=len(d),
                 trades=rows, n=len(closed), wins=len(wins), win_rate=num(100 * len(wins) / len(closed), 1) if closed else None,
                 pf=num(gp / gl) if gl else None, net=num(end_eq - cap), ret=num(100 * (end_eq / cap - 1), 1),
                 max_dd=num(100 * max([x["dd"] for x in closed] or [0]), 1),
@@ -465,37 +522,42 @@ def _hist_book(sym, book):
                 years={str(k): dict(n=v["n"], w=v["w"], pnl=num(v["pnl"])) for k, v in sorted(years.items())})
 
 
-def _hist_run():
+def _hist_run(src):
     jobs = [(s, b) for s in CFG.symbols for b in hist_books()]
+    h = _hist[src]
     with _hist_lock:
-        _hist.update(state="running", done=0, total=len(jobs), error=None)
-    for s, tf in jobs:                                         # one at a time: be gentle with Delta's API
+        h.update(state="running", done=0, total=len(jobs), error=None)
+    for s, tf in jobs:                                         # one at a time: be gentle with the APIs
         try:
-            book = _hist_book(s, tf)
             with _hist_lock:
-                _hist["books"][f"{s}|{tf}"] = book
+                h["note"] = f"{'downloading/updating' if src == 'binance' else 'replaying'} {s} {tf}"
+            book = _hist_book(s, tf, src)
+            with _hist_lock:
+                h["books"][f"{s}|{tf}"] = book
         except Exception as e:
             with _hist_lock:
-                _hist["error"] = f"{s} {tf}: {str(e)[:200]}"
+                h["error"] = f"{s} {tf}: {str(e)[:200]}"
         with _hist_lock:
-            _hist["done"] += 1
+            h["done"] += 1
     with _hist_lock:
-        _hist.update(state="ready", updated=int(time.time()))
+        h.update(state="ready", updated=int(time.time()), note=None)
 
 
-def strategy_history():
-    """Start (or refresh every 30 min) the background run; return whatever is ready so far."""
+def strategy_history(src="delta"):
+    """Start (or refresh every 30 min) the background run for a data source; return whatever is ready so far."""
+    src = src if src in SOURCES else "delta"
+    h = _hist[src]
     with _hist_lock:
-        stale = _hist["state"] == "idle" or (_hist["state"] == "ready" and time.time() - (_hist["updated"] or 0) > 1800)
+        stale = h["state"] == "idle" or (h["state"] == "ready" and time.time() - (h["updated"] or 0) > 1800)
         if stale:
-            _hist["state"] = "running"
+            h["state"] = "running"
     if stale:
-        threading.Thread(target=_hist_run, daemon=True).start()
+        threading.Thread(target=_hist_run, args=(src,), daemon=True).start()
     with _hist_lock:
-        return dict(state=_hist["state"], done=_hist["done"], total=_hist["total"] or len(CFG.symbols) * len(hist_books()),
-                    updated=_hist["updated"], error=_hist["error"], capital=CFG.bot_capital_usd,
+        return dict(src=src, state=h["state"], done=h["done"], total=h["total"] or len(CFG.symbols) * len(hist_books()),
+                    updated=h["updated"], error=h["error"], note=h["note"], capital=CFG.bot_capital_usd,
                     risk=CFG.risk_per_trade, fee=CFG.fee_rate, slippage_bps=CFG.slippage_bps,
-                    books=list(_hist["books"].values()))
+                    books=list(h["books"].values()))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -519,7 +581,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/overview":
                 return self._send(200, json.dumps(overview()), "application/json")
             if u.path == "/api/history":
-                return self._send(200, json.dumps(strategy_history()), "application/json")
+                return self._send(200, json.dumps(strategy_history(q.get("src", "delta"))), "application/json")
             if u.path == "/api/live":
                 return self._send(200, json.dumps(live(sym, tf)), "application/json")
             if u.path == "/api/chart":
