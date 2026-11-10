@@ -749,7 +749,7 @@ function renderBanners() {
     } else {
       const waiting = (c.rules.find(r => r.state !== "pass") || {}).text || "Watching the market.";
       el.className = `panel banner none ${c.preview ? "forming" : ""}`;
-      el.innerHTML = `<div class="ic"><span>${coin === "BTC" ? "₿" : "Ξ"}</span></div><div>
+      el.innerHTML = `<div class="ic"><span>${({BTC:"₿",ETH:"Ξ",SOL:"◎"})[coin] || coin.slice(0,1)}</span></div><div>
         <div class="kicker">${coin} · ${sym} · ${tf} · ${c.trend === "UP" ? "↗ uptrend" : c.trend === "DOWN" ? "↘ downtrend" : "↔ no clear trend"}</div>
         <div class="title">NO SIGNAL</div>
         <div class="why">${esc(waiting)}</div>

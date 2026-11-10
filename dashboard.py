@@ -34,7 +34,7 @@ from risk import RiskManager
 from strategy import add_indicators, levels, signal_at, signals_vectorized
 
 TIMEFRAMES = ["30m", "1h", "4h"]
-TESTED = {"4h": dict(ok=True, text="Backtest profitable · BTC PF 1.17 · ETH PF 1.23"),
+TESTED = {"4h": dict(ok=True, text="Backtest profitable · BTC 1.17 · ETH 1.23 · SOL 1.13 PF"),
           "1h": dict(ok=False, text="Backtest loses after fees · watch only"),
           "30m": dict(ok=False, text="Backtest loses after fees · watch only")}
 HERE = Path(__file__).resolve().parent
