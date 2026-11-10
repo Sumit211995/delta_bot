@@ -6,6 +6,7 @@
   python bot.py --status    # show risk state, paper equity and open paper positions
   python bot.py --panic     # cancel all orders and close positions on every symbol now
   python bot.py --resolution 1h          # override RESOLUTION (paper keeps a separate record per timeframe)
+  python bot.py --paper-tf 30m,1h        # ALSO paper-trade these timeframes (PAPER_TIMEFRAMES in .env)
 """
 import warnings
 
@@ -48,6 +49,21 @@ def fetch_closed_candles(client, cfg, symbol, bars=400) -> pd.DataFrame:
     df = pd.DataFrame(rows)[["time", "open", "high", "low", "close", "volume"]].astype(float)
     df = df[df["time"] + cfg.period_seconds <= now]            # drop the still-forming candle
     return df.reset_index(drop=True)
+
+
+def tag(cfg) -> str:
+    return f"{'PAPER' if cfg.dry_run else 'LIVE'} {cfg.resolution}"
+
+
+def books_for(cfg):
+    """Main book (RESOLUTION, live or paper) + extra PAPER-ONLY books for PAPER_TIMEFRAMES, each with its own
+    state/paper_state_<tf>.json and logs/paper_trades_<tf>.csv (the dashboard's Paper trades per timeframe)."""
+    cfgs = [cfg]
+    for tf in cfg.paper_timeframes:
+        pc = dataclasses.replace(cfg, resolution=tf, dry_run=True, paper_timeframes=())
+        if all(c.state_path != pc.state_path for c in cfgs):
+            cfgs.append(pc)
+    return cfgs
 
 
 def log_trade(cfg, row: dict):
@@ -104,7 +120,7 @@ def settle_paper(cfg, risk, m, df):
     log_trade(cfg, dict(time=fmt_t(t), symbol=m["symbol"], event=why, side=pos["side"], size=pos["size"],
                         entry=pos["entry"], sl=pos["sl"], tp=pos["tp"], exit=exit_p, pnl=round(pl, 4),
                         equity=round(risk.state.paper_equity, 2), live=False))
-    notifier.send(cfg, f"PAPER {m['symbol']} {pos['side'].upper()} closed at {why.upper()} {exit_p} "
+    notifier.send(cfg, f"PAPER {cfg.resolution} {m['symbol']} {pos['side'].upper()} closed at {why.upper()} {exit_p} "
                        f"P&L {pl:+.2f} | paper equity {risk.state.paper_equity:.2f}")
 
 
@@ -156,18 +172,18 @@ def step(client, cfg, risk, m, live_sizes):
         equity = risk.state.paper_equity
     ok, why = risk.check(equity)
     if not ok:
-        notifier.send(cfg, f"{sym} signal {sig.side} skipped: {why}")
+        notifier.send(cfg, f"{tag(cfg)} {sym} signal {sig.side} skipped: {why}")
         return
 
     entry = float(client.get_ticker(sym).get("mark_price") or df["close"].iloc[-1])
     sl, tp = levels(sig.side, entry, sig.atr, cfg, m["tick"])
     size = risk.position_size(equity, entry, sl, m["cval"])
     if size < 1:
-        notifier.send(cfg, f"{sym} signal {sig.side} skipped: size < 1 contract (capital too small for this stop).")
+        notifier.send(cfg, f"{tag(cfg)} {sym} signal {sig.side} skipped: size < 1 contract (capital too small for this stop).")
         return
 
     risk_amt = abs(entry - sl) * size * m["cval"]
-    msg = (f"{'LIVE' if live else 'PAPER'} {sig.side.upper()} {size} {sym} @~{entry:.2f} "
+    msg = (f"{tag(cfg)} {sig.side.upper()} {size} {sym} @~{entry:.2f} "
            f"SL {sl} TP {tp} (risk ~{risk_amt:.2f}) | {sig.reason}")
     notifier.send(cfg, msg)
     row = dict(time=ts, symbol=sym, event="entry", side=sig.side, size=size, entry=entry, sl=sl, tp=tp,
@@ -257,7 +273,7 @@ def status(cfg):
         print(t[["time", "symbol", "event", "side", "size", "entry", "sl", "tp", "exit", "pnl"]].tail(10)
               .to_string(index=False))
     else:
-        print("No trades yet. That's normal: the 4h strategy trades only a few times a week.")
+        print(f"No trades yet on {cfg.resolution}. That's normal: signals are rare (4h: a few per week).")
 
 
 def main():
@@ -268,10 +284,14 @@ def main():
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--resolution", help="override RESOLUTION, e.g. 30m, 1h, 4h")
     ap.add_argument("--symbols", help="override SYMBOLS, e.g. BTCUSD,ETHUSD")
+    ap.add_argument("--paper-tf", help="also paper-trade these timeframes, e.g. 30m,1h ('none' to disable)")
     a = ap.parse_args()
     cfg = load_config()
     if a.resolution:
         cfg = dataclasses.replace(cfg, resolution=a.resolution)
+    if a.paper_tf:
+        tfs = () if a.paper_tf.lower() == "none" else tuple(x.strip() for x in a.paper_tf.split(",") if x.strip())
+        cfg = dataclasses.replace(cfg, paper_timeframes=tfs)
     if a.symbols:
         syms = tuple(x.strip().upper() for x in a.symbols.split(",") if x.strip())
         cfg = dataclasses.replace(cfg, symbols=syms, symbol=syms[0])
@@ -280,7 +300,10 @@ def main():
         print(f"WARNING: live trading on {cfg.resolution}. Only 4h was profitable in testing; 30m/1h lost money.")
     setup_logging(cfg)
     if a.status:
-        return status(cfg)
+        for i, c in enumerate(books_for(cfg)):
+            print(("\n" + "=" * 70 + "\n") if i else "", end="")
+            status(c)
+        return
     client = DeltaClient(cfg.base_url, cfg.api_key, cfg.api_secret)
     markets = load_markets(client, cfg)
 
@@ -289,7 +312,7 @@ def main():
     if a.panic:
         return panic(client, cfg, markets)
 
-    risk = RiskManager(cfg)
+    books = [(c, RiskManager(c)) for c in books_for(cfg)]
     live_sizes = {}
     if not cfg.dry_run:
         for m in markets:
@@ -298,13 +321,15 @@ def main():
             except DeltaError as e:
                 logging.warning("%s: could not set leverage (verify manually in the Delta UI): %s", m["symbol"], e)
             live_sizes[m["symbol"]] = client.position_size(m["pid"])
-    notifier.send(cfg, f"Bot started: {','.join(cfg.symbols)} {cfg.resolution} strategy={cfg.strategy} "
-                       f"env={cfg.env} dry_run={cfg.dry_run}")
+    extra = [c.resolution for c, _ in books[1:]]
+    notifier.send(cfg, f"Bot started: {','.join(cfg.symbols)} {tag(cfg)} strategy={cfg.strategy} env={cfg.env}"
+                       + (f" | also paper-trading {','.join(extra)}" if extra else ""))
     errors = 0
     while True:
         try:
-            for m in markets:
-                step(client, cfg, risk, m, live_sizes)
+            for bcfg, brisk in books:
+                for m in markets:
+                    step(client, bcfg, brisk, m, live_sizes)
             errors = 0
         except KeyboardInterrupt:
             notifier.send(cfg, "Bot stopped by user. Open positions keep their exchange-side SL/TP.")

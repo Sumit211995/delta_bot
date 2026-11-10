@@ -35,6 +35,7 @@ class Config:
     symbol: str = "BTCUSD"                    # first of `symbols` (used by backtest/train)
     symbols: tuple = ("BTCUSD",)
     resolution: str = "4h"
+    paper_timeframes: tuple = ()             # extra timeframes paper-traded alongside RESOLUTION (never real orders)
     strategy: str = "pullback"                # pullback | ema_cross
     rsi_pullback: float = 40.0
     bot_capital_usd: float = 500.0
@@ -95,6 +96,7 @@ def load_config() -> Config:
         symbol=symbols[0],
         symbols=symbols,
         resolution=g("RESOLUTION", "4h"),
+        paper_timeframes=tuple(x.strip() for x in g("PAPER_TIMEFRAMES", "").split(",") if x.strip()),
         strategy=g("STRATEGY", "pullback").lower(),
         rsi_pullback=float(g("RSI_PULLBACK", "40")),
         bot_capital_usd=float(g("BOT_CAPITAL_USD", "500")),
@@ -119,6 +121,9 @@ def validate(cfg: Config) -> None:
         raise SystemExit("DELTA_ENV must be 'testnet' or 'live'")
     if cfg.resolution not in RESOLUTION_SECONDS:
         raise SystemExit(f"RESOLUTION must be one of {list(RESOLUTION_SECONDS)}")
+    bad = [tf for tf in cfg.paper_timeframes if tf not in RESOLUTION_SECONDS]
+    if bad:
+        raise SystemExit(f"PAPER_TIMEFRAMES has unknown timeframe(s) {bad}; use {list(RESOLUTION_SECONDS)}")
     if cfg.strategy not in ("pullback", "ema_cross"):
         raise SystemExit("STRATEGY must be 'pullback' or 'ema_cross'")
     if not cfg.symbols:

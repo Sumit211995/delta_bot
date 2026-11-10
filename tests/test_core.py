@@ -145,3 +145,15 @@ def test_open_orders_filtered_by_product():
     c.request = fake
     assert [o["id"] for o in c.get_open_orders(27)] == [2]
     assert seen["product_ids"] == 27
+
+
+def test_paper_books_are_separate_and_never_live():
+    import dataclasses
+    from bot import books_for
+    from config import Config
+    live = Config(dry_run=False, resolution="4h", paper_timeframes=("30m", "1h", "4h"))
+    books = books_for(live)
+    assert [(c.resolution, c.dry_run) for c in books] == [("4h", False), ("30m", True), ("1h", True), ("4h", True)]
+    assert len({c.state_path for c in books}) == 4                 # live state never shared with a paper book
+    paper = dataclasses.replace(live, dry_run=True)
+    assert [c.resolution for c in books_for(paper)] == ["4h", "30m", "1h"]   # no duplicate 4h paper book

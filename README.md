@@ -97,9 +97,10 @@ source .venv/bin/activate              # you'll see (.venv) at the start of the 
 | Health check | `python bot.py --check` | each coin: price, trend, RSI, today's hypothetical SL/TP/size, wallet (if keys) |
 | **Start paper bot (4h)** | `caffeinate -i python bot.py` | "candle … closed: no signal" every 4h; "PAPER BUY/SELL …" when a setup appears |
 | Paper bot on 1h | `caffeinate -i python bot.py --resolution 1h` | same, every hour (separate paper record) |
+| 4h + paper 30m/1h in one bot | set `PAPER_TIMEFRAMES=30m,1h` (default), run `python bot.py` | 4h trades as usual; 30m and 1h signals are paper-traded only, each in its own record |
 | Paper bot on 30m | `caffeinate -i python bot.py --resolution 30m` | same, every 30 min (separate paper record) |
 | **Dashboard (web page)** | `python dashboard.py` then open http://localhost:8000 | signals, SL/TP, chart, open trades, history |
-| Results | `python bot.py --status` (add `--resolution 1h` for the 1h record) | paper balance, open trades, wins/losses |
+| Results | `python bot.py --status` (shows 4h and every `PAPER_TIMEFRAMES` record) | paper balance, open trades, wins/losses |
 | Backtest | `python backtest.py --days 1000 --symbol ETHUSD --resolution 4h` | past performance + per-year table |
 | Stop a running bot/dashboard | `Ctrl + C` in its terminal | open paper trades are kept; it resumes on restart |
 
@@ -233,6 +234,7 @@ for `state/`. It uses about 100 MB of RAM.
 | `WALLET_ASSET` | USD | wallet asset used for equity; confirm with `--check` |
 | `SYMBOLS` | BTCUSD,ETHUSD | coins to trade (one position each) |
 | `RESOLUTION` | 4h | candle size. Tested on 4h; 1h/2h lost money |
+| `PAPER_TIMEFRAMES` | 30m,1h | extra timeframes paper-traded alongside RESOLUTION, never real orders (`--paper-tf none` to disable) |
 | `STRATEGY` | pullback | `pullback` or `ema_cross` (old) |
 | `RSI_PULLBACK` | 40 | pullback trigger level (shorts use 100 − this) |
 | `BOT_CAPITAL_USD` | 500 | max capital the bot sizes against |
