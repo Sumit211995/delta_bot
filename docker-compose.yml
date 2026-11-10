@@ -17,3 +17,4 @@ services:
     volumes:
       - ./state:/app/state
       - ./logs:/app/logs
+      - ./data:/app/data           # Binance long-history cache (downloaded once, then only new candles)
