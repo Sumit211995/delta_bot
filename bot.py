@@ -52,14 +52,15 @@ def log_trade(cfg, row: dict):
         path, mode="a", header=not os.path.exists(path), index=False)
 
 
-def protection_ok(client, pid) -> bool:
-    """After an entry, make sure a protective order exists. If not, the caller flattens immediately."""
+def protection_ok(client, pid, before_ids=frozenset()) -> bool:
+    """After an entry, make sure a NEW protective order exists (orders that existed before the entry,
+    e.g. your manual orders, do not count). If not, the caller flattens immediately."""
     for _ in range(5):
         time.sleep(1.5)
         try:
             if client.position_size(pid) == 0:
                 return True                                    # already closed (stop/target hit)
-            if len(client.get_open_orders(pid)) >= 1:
+            if any(o.get("id") not in before_ids for o in client.get_open_orders(pid)):
                 return True
         except DeltaError as e:
             logging.warning("protection check error: %s", e)
@@ -174,6 +175,7 @@ def step(client, cfg, risk, m, live_sizes):
         log_trade(cfg, row)
         return
 
+    before_ids = frozenset(o.get("id") for o in client.get_open_orders(pid))
     try:
         res = client.place_bracket_market(pid, size, sig.side, sl, tp, uuid.uuid4().hex[:24])
     except DeltaError as e:
@@ -181,7 +183,7 @@ def step(client, cfg, risk, m, live_sizes):
         return
     risk.record_trade()
     log_trade(cfg, {**row, "order_id": res.get("result", {}).get("id")})
-    if not protection_ok(client, pid):
+    if not protection_ok(client, pid, before_ids):
         client.cancel_all(pid)
         client.close_position(pid)
         risk.halt(f"{sym}: no protective order detected after entry")
