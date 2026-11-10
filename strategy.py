@@ -117,3 +117,25 @@ def levels(side: str, entry: float, atr: float, cfg, tick: float = 0.0):
     else:
         sl, tp = entry + dist, entry - dist * cfg.reward_risk
     return round_tick(sl, tick), round_tick(tp, tick)
+
+
+def signals_vectorized(d: pd.DataFrame, cfg) -> np.ndarray:
+    """Same rules as signal_at() for every row at once (+1 buy, -1 sell, 0 none). Used by the dashboard to draw
+    years of past signals quickly. tests/test_core.py checks it matches signal_at() exactly."""
+    c, fast, slow, trend, rsi = d["close"], d["ema_fast"], d["ema_slow"], d["ema_trend"], d["rsi"]
+    prsi = rsi.shift(1)
+    if cfg.strategy == "pullback":
+        lo, hi = cfg.rsi_pullback, 100 - cfg.rsi_pullback
+        buy = (slow > trend) & (c > trend) & (prsi < lo) & (rsi >= lo)
+        sell = (slow < trend) & (c < trend) & (prsi > hi) & (rsi <= hi)
+    else:
+        up = (fast.shift(1) <= slow.shift(1)) & (fast > slow)
+        dn = (fast.shift(1) >= slow.shift(1)) & (fast < slow)
+        buy = up & (c > trend) & (rsi < 70)
+        sell = dn & (c < trend) & (rsi > 30)
+    valid = d["atr"].notna() & rsi.notna() & prsi.notna()
+    valid &= pd.Series(np.arange(len(d)) >= cfg.ema_trend + 2, index=d.index)
+    out = np.zeros(len(d), dtype=int)
+    out[(buy & valid).to_numpy()] = 1
+    out[(sell & valid & ~buy).to_numpy()] = -1
+    return out

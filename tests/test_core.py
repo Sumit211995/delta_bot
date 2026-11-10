@@ -122,3 +122,14 @@ def test_paper_settle_stop_first_and_pnl():
     assert paper.settle(pos2, c2) == (85.0, 2, "target")
     assert abs(paper.pnl(pos2, 85.0, 0.0) - 150.0) < 1e-9
     assert paper.settle(pos2, c2) is None                     # already-checked candles are skipped
+
+
+def test_vectorized_signals_match_signal_at():
+    import dataclasses
+    from strategy import signals_vectorized
+    for strat in ("pullback", "ema_cross"):
+        cfg = dataclasses.replace(Config(), strategy=strat)
+        d = add_indicators(synthetic(2500, seed=3), cfg)
+        v = signals_vectorized(d, cfg)
+        slow = [0 if (s := signal_at(d, i, cfg)) is None else (1 if s.side == "buy" else -1) for i in range(len(d))]
+        assert list(v) == slow and sum(x != 0 for x in slow) > 5

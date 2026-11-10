@@ -113,7 +113,7 @@ Delete those two files to restart a paper record from zero.
 ### The dashboard (live trading screen)
 `python dashboard.py` and then open **http://localhost:8000**. It is **read-only** and never places or cancels orders.
 - **Live prices:** BTC/ETH mark price, 24h change, high/low, funding and volume. Updated **every 2 seconds**, with a green/red flash and a mini sparkline.
-- **Chart:** click **30m / 1h / 4h** (★ = the timeframe the bot trades). Candles, EMA 50/200, past BUY/SELL signals, dashed
+- **Chart:** click **30m / 1h / 4h** (★ = the timeframe the bot trades) and **1M / 3M / 6M / 1Y / 2Y** for how much history to show (2 years loads in ~2 s, then cached). Candles, EMA 50/200, past BUY/SELL signals, dashed
   **Entry / SL / TP** lines, RSI below. **The last candle moves live** while it forms.
 - **Signal ticket:** BUY / SELL / WAIT / IN TRADE for the selected coin and timeframe, with a visual ladder (target, entry, live price, stop loss),
   size, money at risk vs reward, and live P&L when a trade is open.

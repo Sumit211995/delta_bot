@@ -244,6 +244,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
         <span class="chart-px mono" id="cPx">–</span>
         <span id="cChg"></span>
         <span class="spacer"></span>
+        <div class="seg" id="rangeSeg" title="How much history to show"><span class="thumb"></span></div>
         <div class="seg" id="tfSeg"><span class="thumb"></span></div>
       </div>
       <div class="legend">
@@ -372,6 +373,16 @@ function buildTf() {
   seg.querySelectorAll("button").forEach(b => b.onclick = () => select(S.sym, b.dataset.t));
   requestAnimationFrame(() => moveThumb(seg));
 }
+const RANGES = ["1M", "3M", "6M", "1Y", "2Y"];
+S.range = RANGES.includes(storeGet("range")) ? storeGet("range") : "1Y";
+function buildRange() {
+  const seg = $("rangeSeg");
+  seg.innerHTML = `<span class="thumb"></span>` + RANGES.map(r => `<button data-r="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("");
+  seg.querySelectorAll("button").forEach(b => b.onclick = () => {
+    if (b.dataset.r === S.range) return;
+    S.range = b.dataset.r; storeSet("range", S.range); buildRange(); loadChart(true); });
+  requestAnimationFrame(() => moveThumb(seg));
+}
 function select(sym, tf) {
   const changed = sym !== S.sym || tf !== S.tf;
   S.sym = sym; S.tf = tf;
@@ -433,11 +444,11 @@ function initCharts() {
   sync(chart, rsiChart); sync(rsiChart, chart);
   chart.subscribeCrosshairMove(p => {
     const c = p && p.seriesData ? p.seriesData.get(candleS) : null;
-    if (!c) { $("ohlc").textContent = `${S.sym} · ${S.tf} · hover the chart for candle values`; return; }
+    if (!c) { $("ohlc").textContent = S.chartInfo || ""; return; }
     const e50 = p.seriesData.get(ema50S), e200 = p.seriesData.get(ema200S), up = c.close >= c.open;
     $("ohlc").innerHTML = `${ist(p.time - IST)} IST &nbsp; O <b>${px(c.open)}</b> H <b>${px(c.high)}</b> L <b>${px(c.low)}</b> C <b style="color:${up ? "var(--up)" : "var(--down)"}">${px(c.close)}</b> &nbsp; EMA50 ${px(e50 && e50.value)} · EMA200 ${px(e200 && e200.value)}`;
   });
-  new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth }); rsiChart.applyOptions({ width: el2.clientWidth }); moveThumb($("tfSeg")); }).observe(el);
+  new ResizeObserver(() => { chart.applyOptions({ width: el.clientWidth }); rsiChart.applyOptions({ width: el2.clientWidth }); moveThumb($("tfSeg")); moveThumb($("rangeSeg")); }).observe(el);
 }
 function restyleCharts() {
   if (!chart) return;
@@ -447,26 +458,29 @@ function restyleCharts() {
 }
 async function loadChart(showSkeleton) {
   if (!S.sym) return;
-  const want = S.sym + S.tf;
-  if (showSkeleton) $("chartBox").classList.add("loading");
+  const want = S.sym + S.tf + S.range;
+  if (showSkeleton) { $("chartBox").classList.add("loading"); $("ohlc").textContent = `Loading ${S.range} of ${S.tf} candles…`; }
   try {
-    const d = await (await fetch(`/api/chart?symbol=${S.sym}&tf=${S.tf}`)).json();
-    if (want !== S.sym + S.tf) return;                       // user switched again meanwhile
+    const d = await (await fetch(`/api/chart?symbol=${S.sym}&tf=${S.tf}&range=${S.range}`)).json();
+    if (want !== S.sym + S.tf + S.range) return;             // user switched again meanwhile
     if (d.error) throw new Error(d.error);
-    const sh = a => a.map(x => ({ ...x, time: x.time + IST }));
-    const p = dp(d.candles.length ? d.candles[d.candles.length - 1].close : 1);
+    const k = d.cols, T = k.t.map(t => t + IST);
+    const line = arr => T.map((t, i) => ({ time: t, value: arr[i] })).filter(x => x.value !== null);
+    const candles = T.map((t, i) => ({ time: t, open: k.o[i], high: k.h[i], low: k.l[i], close: k.c[i] }));
+    const p = dp(candles.length ? candles[candles.length - 1].close : 1);
     candleS.applyOptions({ priceFormat: { type: "price", precision: p, minMove: Math.pow(10, -p) } });
-    candleS.setData(sh(d.candles)); ema50S.setData(sh(d.ema50)); ema200S.setData(sh(d.ema200)); rsiS.setData(sh(d.rsi));
-    S.chartLast = d.candles.length ? d.candles[d.candles.length - 1].time : 0;
+    candleS.setData(candles); ema50S.setData(line(k.e50)); ema200S.setData(line(k.e200)); rsiS.setData(line(k.rsi));
+    S.chartLast = candles.length ? candles[candles.length - 1].time : 0;
+    S.chartInfo = `${S.sym} · ${S.tf} · ${S.range}: ${d.n.toLocaleString()} candles since ${d.first ? new Date((d.first + IST) * 1000).toISOString().slice(0, 10) : "–"} · ${d.markers.length} past signals · scroll or pinch to zoom`;
     candleS.setMarkers(d.markers.map(m => ({ time: m.time + IST, position: m.side === "buy" ? "belowBar" : "aboveBar",
-      color: m.side === "buy" ? css("--up") : css("--down"), shape: m.side === "buy" ? "arrowUp" : "arrowDown", text: m.side.toUpperCase() })));
+      color: m.side === "buy" ? css("--up") : css("--down"), shape: m.side === "buy" ? "arrowUp" : "arrowDown", text: d.markers.length <= 40 ? m.side.toUpperCase() : "" })));
     priceLines.forEach(([s, l]) => s.removePriceLine(l)); priceLines = [];
     for (const L of d.lines) for (const [k, c, n] of [["entry", "--neutral", "Entry"], ["sl", "--down", "SL"], ["tp", "--up", "TP"]])
       if (L[k] !== null && L[k] !== undefined) priceLines.push([candleS, candleS.createPriceLine({ price: L[k], color: css(c), lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: `${L.label} ${n}` })]);
     for (const lv of [d.rsi_level, 100 - d.rsi_level])
       priceLines.push([rsiS, rsiS.createPriceLine({ price: lv, color: css("--muted"), lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "" })]);
     if (showSkeleton) chart.timeScale().fitContent();
-    $("ohlc").textContent = `${S.sym} · ${S.tf} · hover the chart for candle values`;
+    $("ohlc").textContent = S.chartInfo;
   } catch (e) { $("ohlc").textContent = "Chart error: " + e.message; }
   finally { $("chartBox").classList.remove("loading"); }
 }
@@ -650,7 +664,7 @@ async function pullOverview() {
     document.querySelectorAll(".rsiLo").forEach(e => e.textContent = d.rsi_level);
     document.querySelectorAll(".rsiHi").forEach(e => e.textContent = 100 - d.rsi_level);
     $("rsiLv").textContent = `${d.rsi_level} / ${100 - d.rsi_level}`; $("hAtr").textContent = d.atr_mult; $("hRr").textContent = d.rr;
-    if (!S.sym) { S.sym = d.symbols[0]; S.tf = d.resolution; buildTf(); loadChart(true); }
+    if (!S.sym) { S.sym = d.symbols[0]; S.tf = d.resolution; buildTf(); buildRange(); loadChart(true); }
     renderTickers(); renderMatrix(); renderSide(); renderKpis(); renderTable();
     S.first = false;
   } catch (e) { toast("Dashboard", "Could not load signals: " + e.message, ""); }

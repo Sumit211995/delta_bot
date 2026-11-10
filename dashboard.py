@@ -31,7 +31,7 @@ import pandas as pd
 from config import RESOLUTION_SECONDS, load_config
 from delta_client import DeltaClient
 from risk import RiskManager
-from strategy import add_indicators, levels, signal_at
+from strategy import add_indicators, levels, signal_at, signals_vectorized
 
 TIMEFRAMES = ["30m", "1h", "4h"]
 TESTED = {"4h": dict(ok=True, text="Backtest profitable · BTC PF 1.17 · ETH PF 1.23"),
@@ -283,19 +283,38 @@ def live(sym, tf):
     return out
 
 
-def chart(sym, tf):
+RANGES = {"1M": 30, "3M": 91, "6M": 182, "1Y": 365, "2Y": 730}
+
+
+def history(sym, tf, days):
+    """Older candles, fetched in parallel 1000-candle chunks and cached for 10 min (history does not change)."""
+    def load():
+        per = RESOLUTION_SECONDS[tf]
+        end = int(time.time())
+        start = end - days * 86400 - (CFG.ema_trend + 50) * per        # extra warm-up so EMA200 is right at the left edge
+        chunks = [(a, min(a + 1000 * per, end)) for a in range(start, end, 1000 * per)]
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            parts = list(ex.map(lambda c: CLIENT.get_candles(sym, tf, c[0], c[1]), chunks))
+        rows = [r for part in parts for r in part]
+        return pd.DataFrame(rows)[["time", "open", "high", "low", "close", "volume"]].astype(float)
+    return cached(("hist", sym, tf, days), 600, load)
+
+
+def chart(sym, tf, rng="3M"):
     cfg = tf_cfg(tf)
-    s = series(sym, tf)
-    closed, full = s["closed"], s["live"]
-    lv = full.tail(300).reset_index(drop=True)
-    start = len(full) - len(lv)                              # index of lv[0] inside `full` (== inside `closed`)
-    markers = []
-    for i in range(len(lv)):
-        j = start + i
-        if j < len(closed):
-            sg = signal_at(closed, j, cfg)
-            if sg:
-                markers.append(dict(time=int(lv["time"].iloc[i]), side=sg.side))
+    per = RESOLUTION_SECONDS[tf]
+    days = RANGES.get(rng, 91)
+    recent = series(sym, tf)["live"][["time", "open", "high", "low", "close", "volume"]]   # fresh tail (8 s cache)
+    raw = pd.concat([history(sym, tf, days), recent]).drop_duplicates("time", keep="last").sort_values("time")
+    d = add_indicators(raw.reset_index(drop=True), cfg)
+    now = time.time()
+    closed_mask = (d["time"] + per <= now).to_numpy()
+    sig = signals_vectorized(d, cfg)
+    sig[~closed_mask] = 0                                           # never mark the still-forming candle
+    first = now - days * 86400
+    view = d[d["time"] >= first]
+    sig = sig[d["time"].to_numpy() >= first]
+    markers = [dict(time=int(t), side="buy" if v > 0 else "sell") for t, v in zip(view["time"], sig) if v]
     lines = []
     for b in paper_books():
         if b["tf"] == tf:
@@ -308,10 +327,11 @@ def chart(sym, tf):
     c = card(sym, tf)
     if c["signal"]:
         lines.append(dict(label="Signal", entry=c["signal"]["entry"], sl=c["signal"]["sl"], tp=c["signal"]["tp"]))
-    rec = lambda col: [dict(time=int(t), value=num(v, 4)) for t, v in zip(lv["time"], lv[col]) if num(v) is not None]
-    return dict(symbol=sym, tf=tf, markers=markers, lines=lines, rsi_level=CFG.rsi_pullback, card=c,
-                candles=[dict(time=int(r.time), open=r.open, high=r.high, low=r.low, close=r.close) for r in lv.itertuples()],
-                ema50=rec("ema_slow"), ema200=rec("ema_trend"), rsi=rec("rsi"))
+    col = lambda k, nd=4: [num(v, nd) for v in view[k]]
+    return dict(symbol=sym, tf=tf, range=rng, markers=markers, lines=lines, rsi_level=CFG.rsi_pullback,
+                n=len(view), first=int(view["time"].iloc[0]) if len(view) else None,
+                cols=dict(t=[int(t) for t in view["time"]], o=col("open"), h=col("high"), l=col("low"), c=col("close"),
+                          e50=col("ema_slow"), e200=col("ema_trend"), rsi=col("rsi", 2)))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -339,7 +359,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/chart":
                 if sym not in CFG.symbols or tf not in TIMEFRAMES:
                     return self._send(400, '{"error":"bad symbol/tf"}', "application/json")
-                return self._send(200, json.dumps(chart(sym, tf)), "application/json")
+                return self._send(200, json.dumps(chart(sym, tf, q.get("range", "3M"))), "application/json")
             self._send(404, "not found", "text/plain")
         except Exception as e:
             self._send(500, json.dumps(dict(error=str(e)[:300])), "application/json")
