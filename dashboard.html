@@ -49,10 +49,11 @@ button { font: inherit; color: inherit; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; letter-spacing: -.2px; }
 .brand .logo { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
   background: linear-gradient(135deg, var(--accent), #ffb15c); box-shadow: 0 6px 18px var(--accent-soft); }
-.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+.pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px; line-height: 1; border-radius: 999px; font-size: 12px; font-weight: 600;
   border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text-2); white-space: nowrap; }
 .pill.live { background: var(--accent); color: #fff; border-color: transparent; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); position: relative; flex: none; }
+.pill .dot { top: -0.5px; }                              /* optical centre: caps sit above the line-box middle */
 .dot.ok { background: var(--up); } .dot.stale { background: var(--warn); } .dot.err { background: var(--down); }
 .dot.ok::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--up); opacity: 0; animation: ping 1.8s ease-out infinite; }
 @keyframes ping { 0% { transform: scale(.6); opacity: .8; } 100% { transform: scale(1.6); opacity: 0; } }
