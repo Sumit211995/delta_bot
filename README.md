@@ -276,7 +276,7 @@ Telegram "Bot started" received · dashboard opens through the SSH tunnel · lap
 | `SYMBOLS` | BTCUSD,ETHUSD | coins to trade (one position each) |
 | `RESOLUTION` | 4h | candle size. Tested on 4h; 1h/2h lost money |
 | `PAPER_TIMEFRAMES` | 30m,1h | extra timeframes paper-traded alongside RESOLUTION, never real orders (`--paper-tf none` to disable) |
-| `PAPER_TRAIL_TIMEFRAMES` | 4h | also paper-trade these with a **trailing stop** instead of the fixed 3R target (paper only) |
+| `PAPER_TRAIL_TIMEFRAMES` | 4h,1d | also paper-trade these with a **trailing stop** instead of the fixed 3R target (paper only) |
 | `TRAIL_ACTIVATE_R` / `TRAIL_ATR` | 1.0 / 2.0 | trailing starts at +1R; the stop follows 2 × ATR behind the best close |
 | `STRATEGY` | pullback | `pullback` or `ema_cross` (old) |
 | `RSI_PULLBACK` | 40 | pullback trigger level (shorts use 100 − this) |

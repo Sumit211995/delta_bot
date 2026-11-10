@@ -34,10 +34,11 @@ from delta_client import DeltaClient
 from risk import RiskManager
 from strategy import add_indicators, levels, signal_at, signals_vectorized
 
-TIMEFRAMES = ["30m", "1h", "4h"]
+TIMEFRAMES = ["30m", "1h", "4h", "1d"]
 TESTED = {"4h": dict(ok=True, text="Backtest profitable · BTC 1.17 · ETH 1.23 · SOL 1.13 PF"),
           "1h": dict(ok=False, text="Backtest loses after fees · watch only"),
-          "30m": dict(ok=False, text="Backtest loses after fees · watch only")}
+          "30m": dict(ok=False, text="Backtest loses after fees · watch only"),
+          "1d": dict(ok=False, text="Fixed 1:3 weak · trailing stop profitable (paper test)")}
 HERE = Path(__file__).resolve().parent
 
 CFG = load_config()
@@ -192,12 +193,23 @@ def read_trades(path, source):
     return rows
 
 
+def book_cfg(book):
+    tf = book.split("-")[0]
+    return dataclasses.replace(CFG, resolution=tf, dry_run=True, state_file="",
+                               exit_mode="trail" if book.endswith("-trail") else "fixed")
+
+
 def book_cfgs():
-    """Every paper record: one per timeframe (fixed SL + TP) plus trailing-stop variants (PAPER_TRAIL_TIMEFRAMES)."""
-    out = [(tf, dataclasses.replace(CFG, resolution=tf, dry_run=True, state_file="", exit_mode="fixed")) for tf in TIMEFRAMES]
-    out += [(f"{tf}-trail", dataclasses.replace(CFG, resolution=tf, dry_run=True, state_file="", exit_mode="trail"))
-            for tf in CFG.paper_trail_timeframes if tf in TIMEFRAMES]
-    return out
+    """Paper records the bot keeps: the traded timeframe + PAPER_TIMEFRAMES (fixed SL + TP) and the trailing-stop
+    variants (PAPER_TRAIL_TIMEFRAMES)."""
+    fixed = [tf for tf in TIMEFRAMES if tf == CFG.resolution or tf in CFG.paper_timeframes]
+    books = fixed + [f"{tf}-trail" for tf in TIMEFRAMES if tf in CFG.paper_trail_timeframes]
+    return [(b, book_cfg(b)) for b in books]
+
+
+def hist_books():
+    """Strategy-history columns: every timeframe with the fixed exit (for comparison) + the trailing variants."""
+    return list(TIMEFRAMES) + [f"{tf}-trail" for tf in TIMEFRAMES if tf in CFG.paper_trail_timeframes]
 
 
 def book_label(book):
@@ -340,7 +352,7 @@ def overview():
                 errors.append(f"{sym} {tf}: {e}")
     return dict(generated=int(time.time()), mode="PAPER" if CFG.dry_run else "LIVE", env=CFG.env,
                 strategy=CFG.strategy, resolution=CFG.resolution, symbols=list(CFG.symbols),
-                paper_timeframes=list(CFG.paper_timeframes), books=[b for b, _ in book_cfgs()],
+                paper_timeframes=list(CFG.paper_timeframes), books=[b for b, _ in book_cfgs()], hist_books=hist_books(),
                 trail=dict(activate_r=CFG.trail_activate_r, atr=CFG.trail_atr), capital=CFG.bot_capital_usd, risk=CFG.risk_per_trade, atr_mult=CFG.atr_stop_mult, rr=CFG.reward_risk,
                 rsi_level=CFG.rsi_pullback, max_trades=CFG.max_trades_per_day, daily_loss=CFG.daily_loss_limit,
                 cards=cards, paper=paper_books(), live=live_account(),
@@ -454,7 +466,7 @@ def _hist_book(sym, book):
 
 
 def _hist_run():
-    jobs = [(s, b) for s in CFG.symbols for b, _ in book_cfgs()]
+    jobs = [(s, b) for s in CFG.symbols for b in hist_books()]
     with _hist_lock:
         _hist.update(state="running", done=0, total=len(jobs), error=None)
     for s, tf in jobs:                                         # one at a time: be gentle with Delta's API
@@ -480,7 +492,7 @@ def strategy_history():
     if stale:
         threading.Thread(target=_hist_run, daemon=True).start()
     with _hist_lock:
-        return dict(state=_hist["state"], done=_hist["done"], total=_hist["total"] or len(CFG.symbols) * len(book_cfgs()),
+        return dict(state=_hist["state"], done=_hist["done"], total=_hist["total"] or len(CFG.symbols) * len(hist_books()),
                     updated=_hist["updated"], error=_hist["error"], capital=CFG.bot_capital_usd,
                     risk=CFG.risk_per_trade, fee=CFG.fee_rate, slippage_bps=CFG.slippage_bps,
                     books=list(_hist["books"].values()))

@@ -267,6 +267,7 @@ with live data before trusting any timeframe with real money.
 | **1h** | every hour | **paper only, always** | `state/paper_state_1h.json`, `logs/paper_trades_1h.csv` |
 | **30m** | every 30 minutes | **paper only, always** | `state/paper_state_30m.json`, `logs/paper_trades_30m.csv` |
 | **4h trail** | every 4 hours | **paper only, always**: same signals, trailing stop instead of a fixed target | `state/paper_state_4h-trail.json`, `logs/paper_trades_4h-trail.csv` |
+| **1d trail** | once a day (05:30 IST) | **paper only, always**: daily candles with the trailing stop | `state/paper_state_1d-trail.json`, `logs/paper_trades_1d-trail.csv` |
 
 - Each timeframe starts with its own **$500** paper balance (`BOT_CAPITAL_USD`) and its own limits.
 - `PAPER_TIMEFRAMES=30m,1h` in `.env` controls the extra timeframes. Even when 4h goes live, these stay paper-only.
@@ -488,7 +489,23 @@ On all 10 Binance coins the current strategy was profitable on 7 (not LINK, LTC 
 target in **both** 2019–2022 and 2023–2026, with 16 different trailing settings. It still won after removing its 5
 biggest trades.
 
-### 13.3 What did not help (tested and rejected)
+### 13.3 Daily (1D) candles
+
+| BTC + ETH + SOL | Trades / month | Win rate | Profit factor | Total R |
+|---|---|---|---|---|
+| 1D fixed 1:3 · Binance 2019–2026 | 1.1 | 30% | 1.25 | +16.5R (lost money 2023–26) |
+| **1D trailing · Binance 2019–2026** | 1.3 | **45%** | **2.15** | **+70.8R** (profitable in both 2019–22 and 2023–26) |
+| 1D fixed 1:3 · Delta 2024–2026 | 1.2 | 19% | 0.69 | −10.8R |
+| 1D trailing · Delta 2024–2026 | 1.4 | 37% | 1.30 | +9.5R (only 49 trades) |
+| *4h trailing · Binance, for comparison* | 8.5 | 42% | 1.48 | +195R |
+
+Daily candles with the **trailing stop** are high quality but rare (about one trade a month across the 3 coins), so
+"1d trail" runs as a paper record. Daily with the fixed target is not worth trading.
+
+**Daily trend as a filter for 4h** (only buy on 4h when the daily chart is also up): tested strict and loose versions.
+It **cut profit in every case** (e.g. 4h trail +195R → +118R to +125R) and is not used.
+
+### 13.4 What did not help (tested and rejected)
 
 | Idea | Result on unseen data |
 |---|---|
@@ -498,6 +515,8 @@ biggest trades.
 | 2h or 1h candles, or 4h trend + 1h entry | 2–6× more trades, all about break-even or losing |
 | Target 1:2 instead of 1:3 | About half the long-run profit |
 | ADX trend-strength filter | Fewer trades, no improvement |
+| Daily trend filter on 4h trades | Fewer trades, less profit in every version |
+| Daily candles with the fixed 1:3 target | Lost money on Delta and on Binance since 2023 |
 
 ---
 
@@ -534,7 +553,7 @@ Run these in the project folder (`cd ~/Documents/Project/delta_bot`):
 | `SYMBOLS` | `BTCUSD,ETHUSD,SOLUSD` | Coins to trade, comma separated |
 | `RESOLUTION` | `4h` | Main timeframe (the tested one) |
 | `PAPER_TIMEFRAMES` | `30m,1h` | Extra timeframes, paper only |
-| `PAPER_TRAIL_TIMEFRAMES` | `4h` | Also paper-trade with a trailing stop (no fixed target) |
+| `PAPER_TRAIL_TIMEFRAMES` | `4h,1d` | Also paper-trade with a trailing stop (no fixed target) |
 | `TRAIL_ACTIVATE_R` / `TRAIL_ATR` | `1.0` / `2.0` | Trailing starts at +1R, stop 2 × ATR behind the best close |
 | `STRATEGY` | `pullback` | `pullback` (default) or `ema_cross` (old, loses money) |
 | `RSI_PULLBACK` | `40` | Buy level (sell level = 100 − this = 60) |
