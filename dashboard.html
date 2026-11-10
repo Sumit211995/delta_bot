@@ -196,6 +196,36 @@ tbody tr { transition: background .2s; } tbody tr:hover { background: var(--surf
 .pnlbar { display: inline-block; width: 60px; height: 4px; border-radius: 4px; background: var(--surface-3); vertical-align: middle; margin-left: 8px; position: relative; overflow: hidden; }
 .pnlbar i { position: absolute; top: 0; bottom: 0; transition: width .6s, left .6s; }
 
+
+/* ---------- paper journal ---------- */
+.books { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; margin-bottom: 16px; }
+.book { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 14px; position: relative; overflow: hidden;
+  cursor: pointer; transition: transform .2s, border-color .2s; animation: rise .5s both; }
+.book:hover { transform: translateY(-2px); border-color: var(--border-2); }
+.book.on { border-color: var(--text-2); }
+.book.traded::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--accent); }
+.book .bh { display: flex; justify-content: space-between; align-items: center; font-weight: 700; }
+.book .bh small { color: var(--muted); font-weight: 500; font-size: 11px; }
+.book .eq { font-size: 22px; font-weight: 600; margin: 6px 0 2px; }
+.book .bg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.book .bg div { font-size: 11px; color: var(--muted); } .book .bg b { display: block; color: var(--text); font-size: 14px; font-weight: 600; margin-top: 1px; }
+.wbar { height: 4px; border-radius: 4px; background: var(--down-soft); margin-top: 10px; overflow: hidden; }
+.wbar i { display: block; height: 100%; background: var(--up); transition: width .8s cubic-bezier(.2,.8,.2,1); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.filters .lbl { font-size: 12px; color: var(--muted); margin-right: 2px; }
+.fchips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.fchips button { border: 1px solid var(--border); background: var(--surface-2); padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.fchips button.on { color: var(--text); background: var(--surface-3); border-color: var(--border-2); }
+.btn-dl { margin-left: auto; border: 1px solid var(--border); background: var(--surface-2); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.st { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 7px; letter-spacing: .4px; }
+.st.open { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.st.open::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: blink 1.2s infinite; }
+.st.won { color: var(--up); background: var(--up-soft); } .st.lost { color: var(--down); background: var(--down-soft); }
+.tfb { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--surface-3); color: var(--text-2); }
+.tfb.traded { color: var(--accent); }
+tr.jnew { animation: pop .6s both; }
+.why-row td { color: var(--muted); font-size: 12px; white-space: normal; padding-top: 0; }
+
 /* ---------- toasts ---------- */
 .toasts { position: fixed; right: 16px; top: 70px; z-index: 50; display: grid; gap: 10px; width: min(360px, calc(100vw - 32px)); }
 .toast { background: var(--surface); border: 1px solid var(--border-2); border-left: 4px solid var(--accent); border-radius: 12px;
@@ -214,6 +244,7 @@ details.how[open] summary::before { transform: rotate(90deg); }
 .how-grid h4 { margin: 0 0 6px; font-size: 13px; } .how-grid p { margin: 0; color: var(--text-2); font-size: 13px; }
 .err { color: var(--down); font-size: 12px; margin-top: 8px; }
 footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; }
+
 
 /* ---------- signal banners ---------- */
 .banners { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); gap: 12px; margin-top: 16px; }
@@ -325,6 +356,13 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
     <div class="err" id="errors"></div>
   </div>
 
+  <div class="panel section" style="--i:5" id="journalPanel">
+    <div class="ph"><h2>Paper trading · 30m vs 1h vs 4h</h2><span class="hint">every trade the bot simulates, on every timeframe · no real orders · click a card to filter</span></div>
+    <div class="books" id="books"></div>
+    <div class="filters" id="jFilters"></div>
+    <div class="scroll"><table id="jTbl"></table></div>
+  </div>
+
   <div class="panel section" style="--i:5">
     <div class="ph"><h2>Account & risk</h2></div>
     <div class="kpis" id="kpis"></div>
@@ -334,7 +372,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 2
     <div class="ph">
       <div class="tabs" id="tblTabs">
         <button data-t="open" class="on">Open trades<span class="count" id="cOpen"></span></button>
-        <button data-t="hist">History<span class="count" id="cHist"></span></button>
+        <button data-t="hist">Event log<span class="count" id="cHist"></span></button>
         <button data-t="orders">Delta orders<span class="count" id="cOrd"></span></button>
       </div>
     </div>
@@ -693,6 +731,102 @@ function renderTable() {
 $("tblTabs").querySelectorAll("button").forEach(b => b.onclick = () => {
   S.tab = b.dataset.t; $("tblTabs").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); renderTable(); });
 
+/* ---------- paper journal (one row per trade, all timeframes) ---------- */
+S.jf = (() => { try { return JSON.parse(localStorage.getItem("jf")) || {}; } catch (e) { return {}; } })();
+S.jf = { tf: "all", coin: "all", st: "all", ...S.jf };
+S.jSeen = null;
+function saveJf() { try { localStorage.setItem("jf", JSON.stringify(S.jf)); } catch (e) {} }
+function jRows() {
+  const d = S.ov, byTf = Object.fromEntries(d.paper.map(b => [b.tf, b]));
+  const rows = d.paper.flatMap(b => (b.journal || []).map(x => ({ ...x })));
+  rows.forEach(x => {                                        // link open journal rows to live state for P&L
+    if (x.status !== "open") return;
+    const p = (byTf[x.tf].positions || []).find(q => q.symbol === x.symbol);
+    x.cval = p ? p.cval : null; x.mark = p ? p.mark : null;
+    x.live = p ? livePnl({ ...p }) : null;
+  });
+  rows.sort((a, b) => (b.opened || 0) - (a.opened || 0) || TFS.indexOf(b.tf) - TFS.indexOf(a.tf));
+  return rows;
+}
+function dur(a, b) { if (!a) return "–"; const s = Math.max(0, (b || Date.now() / 1000) - a), h = Math.floor(s / 3600);
+  return h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : h ? `${h}h ${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 60)}m`; }
+function renderBooks() {
+  const d = S.ov, box = $("books");
+  const html = TFS.map(tf => {
+    const b = d.paper.find(x => x.tf === tf), traded = tf === d.resolution;
+    if (!b) return `<div class="book ${traded ? "traded" : ""} ${S.jf.tf === tf ? "on" : ""}" data-tf="${tf}">
+      <div class="bh"><span>${tf} ${traded ? "★" : ""}</span><small>not started</small></div>
+      <div class="sub" style="margin-top:8px">Run <span class="mono">python bot.py</span>. ${tf} is ${d.paper_timeframes && d.paper_timeframes.includes(tf) || traded ? "enabled" : "not in PAPER_TIMEFRAMES"}.</div></div>`;
+    const open = b.positions.length, liveOpen = b.positions.reduce((a, p) => a + (livePnl(p) || 0), 0);
+    const pct = b.start ? (b.equity - b.start) / b.start * 100 : 0;
+    return `<div class="book ${traded ? "traded" : ""} ${S.jf.tf === tf ? "on" : ""}" data-tf="${tf}">
+      <div class="bh"><span>${tf} ${traded ? '<span style="color:var(--accent)">★ traded</span>' : '<small>paper · watch only</small>'}</span>
+        <small>${b.halted ? "⛔ halted" : b.last_checked ? "checked " + ist(b.last_checked + ({ "30m": 1800, "1h": 3600, "4h": 14400 })[tf]) : "waiting"}</small></div>
+      <div class="eq mono">$${fmt(b.equity)} <span class="${b.net >= 0 ? "pos-t" : "neg-t"}" style="font-size:13px">${money(b.net || 0)} (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span></div>
+      <div class="sub">started at $${fmt(b.start, 0)}${open ? ` · open P&L <b class="${liveOpen >= 0 ? "pos-t" : "neg-t"}">${money(liveOpen)}</b>` : ""}</div>
+      <div class="bg"><div>Trades<b class="mono">${b.closed}${open ? ` +${open} open` : ""}</b></div>
+        <div>Win rate<b class="mono">${b.win_rate === null ? "–" : b.win_rate + "%"}</b></div>
+        <div>W / L<b class="mono">${b.wins} / ${b.losses}</b></div>
+        <div>Avg R<b class="mono">${b.avg_r === null ? "–" : (b.avg_r > 0 ? "+" : "") + b.avg_r + "R"}</b></div>
+        <div>Max drawdown<b class="mono">${fmt(b.max_dd, 1)}%</b></div>
+        <div>Open now<b class="mono">${open}</b></div></div>
+      <div class="wbar" title="win rate"><i style="width:${b.closed ? b.win_rate : 0}%"></i></div></div>`;
+  }).join("");
+  if (box.dataset.h !== html) { box.innerHTML = html; box.dataset.h = html;
+    box.querySelectorAll(".book").forEach(el => el.onclick = () => { S.jf.tf = S.jf.tf === el.dataset.tf ? "all" : el.dataset.tf; saveJf(); renderJournal(); }); }
+}
+function chipGroup(key, label, opts) {
+  return `<span class="lbl">${label}</span><span class="fchips" data-k="${key}">` +
+    opts.map(([v, t]) => `<button data-v="${v}" class="${S.jf[key] === v ? "on" : ""}">${t}</button>`).join("") + "</span>";
+}
+function renderJournal() {
+  const d = S.ov; if (!d) return;
+  renderBooks();
+  const all = jRows();
+  const cnt = f => all.filter(f).length;
+  $("jFilters").innerHTML =
+    chipGroup("tf", "Timeframe", [["all", `All (${all.length})`], ...TFS.map(t => [t, `${t} (${cnt(x => x.tf === t)})`])]) +
+    chipGroup("coin", "Coin", [["all", "All"], ...d.symbols.map(s => [s, s.replace("USD", "")])]) +
+    chipGroup("st", "Status", [["all", "All"], ["open", `Open (${cnt(x => x.status === "open")})`], ["won", `Won (${cnt(x => x.status === "won")})`], ["lost", `Lost (${cnt(x => x.status === "lost")})`]]) +
+    `<button class="btn-dl" id="jDl">⬇ Download CSV</button>`;
+  $("jFilters").querySelectorAll(".fchips").forEach(g => g.querySelectorAll("button").forEach(b => b.onclick = () => {
+    S.jf[g.dataset.k] = b.dataset.v; saveJf(); renderJournal(); }));
+  const rows = all.filter(x => (S.jf.tf === "all" || x.tf === S.jf.tf) && (S.jf.coin === "all" || x.symbol === S.jf.coin) && (S.jf.st === "all" || x.status === S.jf.st));
+  $("jDl").onclick = () => downloadCsv(rows);
+  const seen = S.jSeen || new Set(all.map(x => x.tf + x.symbol + x.opened + x.status));
+  const n = rows.length;
+  $("jTbl").innerHTML = !n ? `<tbody><tr><td class="empty"><div class="big">☰</div>${all.length ? "No trades match these filters." :
+      `No paper trades yet. The bot checks <b>30m</b> every 30 minutes, <b>1h</b> every hour and <b>4h</b> every 4 hours.<br>When a rule set completes, the trade appears here with entry, stop loss and target, and Telegram pings you.`}</td></tr></tbody>` :
+    `<thead><tr><th>#</th><th>TF</th><th>Coin</th><th>Side</th><th>Opened (IST)</th><th>Entry</th><th>Stop loss</th><th>Target</th><th>Status</th><th>Exit / now</th><th>Closed (IST)</th><th>Held</th><th>P&L</th><th>R</th></tr></thead><tbody>` +
+    rows.map((x, i) => {
+      const k = x.tf + x.symbol + x.opened + x.status, isNew = S.jSeen && !seen.has(k);
+      const tk = S.live && S.live.tickers[x.symbol], now = tk ? tk.mark : x.mark;
+      const pnl = x.status === "open" ? (x.cval && now ? (now - x.entry) * (x.side === "buy" ? 1 : -1) * x.size * x.cval : null) : x.pnl;
+      const st = x.status === "open" ? `<span class="st open">OPEN</span>` : x.status === "won" ? `<span class="st won">✓ TARGET</span>` : `<span class="st lost">✕ STOP</span>`;
+      return `<tr class="${isNew ? "jnew" : ""}" title="${esc(x.reason || "")}"><td class="mono" style="color:var(--muted)">${n - i}</td>
+        <td><span class="tfb ${x.tf === d.resolution ? "traded" : ""}">${x.tf}</span></td><td><b>${esc(x.symbol)}</b></td>
+        <td class="${x.side === "buy" ? "pos-t" : "neg-t"}"><b>${x.side === "buy" ? "▲ BUY" : "▼ SELL"}</b> <span class="mono" style="color:var(--muted)">${fmt(x.size, 0)}</span></td>
+        <td class="mono">${x.opened ? ist(x.opened) : "–"}</td><td class="mono">${px(x.entry)}</td>
+        <td class="mono neg-t">${px(x.sl)}</td><td class="mono pos-t">${px(x.tp)}</td><td>${st}</td>
+        <td class="mono">${x.status === "open" ? (now ? px(now) : "–") : px(x.exit)}</td>
+        <td class="mono">${x.closed ? ist(x.closed) : "–"}</td><td class="mono">${dur(x.opened, x.closed)}</td>
+        <td class="mono ${(pnl || 0) >= 0 ? "pos-t" : "neg-t"}">${pnl === null || pnl === undefined ? "–" : money(pnl)}</td>
+        <td class="mono ${(x.r || 0) >= 0 ? "pos-t" : "neg-t"}">${x.r === null || x.r === undefined ? "–" : (x.r > 0 ? "+" : "") + x.r + "R"}</td></tr>`;
+    }).join("") + "</tbody>";
+  if (S.jSeen && all.some(x => !seen.has(x.tf + x.symbol + x.opened + x.status)))
+    all.filter(x => !seen.has(x.tf + x.symbol + x.opened + x.status) && x.status !== "open")
+       .forEach(x => toast(`Paper ${x.tf} · ${x.symbol}`, x.status === "won" ? `✓ Target hit: ${money(x.pnl)}` : `✕ Stop hit: ${money(x.pnl)}`, x.status === "won" ? "buy" : "sell"));
+  S.jSeen = new Set(all.map(x => x.tf + x.symbol + x.opened + x.status));
+}
+function downloadCsv(rows) {
+  const cols = ["tf", "symbol", "side", "size", "opened_ist", "entry", "sl", "tp", "status", "exit", "closed_ist", "pnl", "r", "reason"];
+  const q = v => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const body = rows.map(x => cols.map(c => q(c === "opened_ist" ? (x.opened ? ist(x.opened) : "") : c === "closed_ist" ? (x.closed ? ist(x.closed) : "") : x[c])).join(","));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([[cols.join(","), ...body].join("\n")], { type: "text/csv" }));
+  a.download = `paper_trades_${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+}
+
 /* ---------- signal banners (one per coin, on the timeframe the bot trades) ---------- */
 const DEMO = new URLSearchParams(location.search).has("demo");
 function injectDemo(d) {
@@ -805,7 +939,7 @@ async function pullOverview() {
     document.querySelectorAll(".rsiHi").forEach(e => e.textContent = 100 - d.rsi_level);
     $("rsiLv").textContent = `${d.rsi_level} / ${100 - d.rsi_level}`; $("hAtr").textContent = d.atr_mult; $("hRr").textContent = d.rr;
     if (!S.sym) { S.sym = d.symbols[0]; S.tf = d.resolution; buildTf(); buildRange(); loadChart(true); }
-    renderTickers(); renderBanners(); renderMatrix(); renderSide(); renderKpis(); renderTable();
+    renderTickers(); renderBanners(); renderMatrix(); renderSide(); renderKpis(); renderTable(); renderJournal();
     S.first = false;
   } catch (e) { toast("Dashboard", "Could not load signals: " + e.message, ""); }
 }
@@ -821,7 +955,7 @@ async function pullLive() {
       if (t > S.chartLast) loadChart(false);                 // a new candle started: reload history
       else if (t === S.chartLast) candleS.update({ time: t, open: f.open, high: f.high, low: f.low, close: f.close });
     }
-    if (S.ov) { renderSide(); updateBannerPnl(); if (S.tab === "open") renderTable(); }
+    if (S.ov) { renderSide(); updateBannerPnl(); if (S.tab === "open") renderTable(); renderJournal(); }
   } catch (e) { /* connection pill shows the state */ }
 }
 function tick() {

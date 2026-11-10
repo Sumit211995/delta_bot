@@ -191,6 +191,48 @@ def read_trades(path, source):
     return rows
 
 
+def utc_epoch(text):
+    try:
+        return int(pd.Timestamp(str(text).replace(" UTC", ""), tz="UTC").timestamp())
+    except (ValueError, TypeError):
+        return None
+
+
+def journal(cfg, tf):
+    """Pair each paper 'entry' row with its 'stop'/'target' row -> one record per trade (full history, oldest first).
+    The CSV logs the signal candle's open time; the bot enters when that candle CLOSES, so opened = time + period.
+    An exit row's time is the candle in which the SL/TP was hit."""
+    if not os.path.exists(cfg.trades_path):
+        return []
+    rows = pd.read_csv(cfg.trades_path).replace({np.nan: None}).to_dict("records")
+    period, open_by_sym, out = RESOLUTION_SECONDS[tf], {}, []
+    for r in rows:
+        sym, ev = r.get("symbol"), r.get("event")
+        if ev == "entry":
+            t0 = utc_epoch(r.get("time"))
+            rec = dict(tf=tf, symbol=sym, side=r.get("side"), size=num(r.get("size"), 0), entry=num(r.get("entry"), 6),
+                       sl=num(r.get("sl"), 6), tp=num(r.get("tp"), 6), opened=t0 + period if t0 else None,
+                       reason=r.get("reason"), status="open", exit=None, closed=None, pnl=None, r=None,
+                       equity_before=num(r.get("equity")))
+            open_by_sym[sym] = rec
+            out.append(rec)
+        elif ev in ("stop", "target"):
+            rec = open_by_sym.pop(sym, None)
+            if rec is None:                                   # exit without a logged entry: keep it visible anyway
+                rec = dict(tf=tf, symbol=sym, side=r.get("side"), size=num(r.get("size"), 0), entry=num(r.get("entry"), 6),
+                           sl=num(r.get("sl"), 6), tp=num(r.get("tp"), 6), opened=None, reason=None)
+                out.append(rec)
+            t1 = utc_epoch(r.get("time"))
+            rec.update(status="won" if (r.get("pnl") or 0) > 0 else "lost", hit=ev, exit=num(r.get("exit"), 6),
+                       closed=t1 + period if t1 else None, pnl=num(r.get("pnl"), 4), equity_after=num(r.get("equity")))
+            try:
+                risk_usd = abs(rec["entry"] - rec["sl"]) * rec["size"] * product(sym)["cval"]
+                rec["r"] = num(rec["pnl"] / risk_usd, 2) if risk_usd else None
+            except Exception:
+                rec["r"] = None
+    return out
+
+
 def paper_books():
     books = []
     for tf in TIMEFRAMES:
@@ -199,16 +241,27 @@ def paper_books():
             continue
         s = RiskManager(cfg).state
         trades = read_trades(cfg.trades_path, f"Paper {tf}")
-        closed = [x for x in trades if x.get("event") in ("stop", "target")]
+        jr = journal(cfg, tf)
+        closed = [x for x in jr if x["status"] != "open"]
+        wins = sum(1 for x in closed if x["status"] == "won")
+        eq = s.paper_equity or CFG.bot_capital_usd
+        peak, mdd, run = CFG.bot_capital_usd, 0.0, CFG.bot_capital_usd   # max drawdown from the closed-trade curve
+        for x in closed:
+            run += x["pnl"] or 0
+            peak = max(peak, run)
+            mdd = max(mdd, (peak - run) / peak if peak else 0)
+        rs = [x["r"] for x in closed if x.get("r") is not None]
         positions = []
         for sym, p in s.paper_positions.items():
             positions.append(dict(source=f"Paper {tf}", symbol=sym, side=p["side"], size=p["size"], cval=p["cval"],
                                   entry=num(p["entry"]), sl=p["sl"], tp=p["tp"], mark=num(mark_price(sym)),
                                   opened=p.get("opened")))
-        books.append(dict(tf=tf, equity=num(s.paper_equity or CFG.bot_capital_usd), start=CFG.bot_capital_usd,
-                          positions=positions, trades=trades, wins=sum(1 for x in closed if (x.get("pnl") or 0) > 0),
-                          losses=sum(1 for x in closed if (x.get("pnl") or 0) <= 0),
-                          net=num(sum((x.get("pnl") or 0) for x in closed)), halted=s.halted, halt_reason=s.halt_reason))
+        books.append(dict(tf=tf, equity=num(eq), start=CFG.bot_capital_usd, positions=positions, trades=trades,
+                          journal=jr, wins=wins, losses=len(closed) - wins, closed=len(closed),
+                          win_rate=num(100 * wins / len(closed), 1) if closed else None,
+                          net=num(sum((x["pnl"] or 0) for x in closed)), avg_r=num(sum(rs) / len(rs), 2) if rs else None,
+                          max_dd=num(100 * mdd, 1), last_checked=max(s.last_processed_by.values(), default=None),
+                          halted=s.halted, halt_reason=s.halt_reason))
     return books
 
 
@@ -262,7 +315,7 @@ def overview():
                 errors.append(f"{sym} {tf}: {e}")
     return dict(generated=int(time.time()), mode="PAPER" if CFG.dry_run else "LIVE", env=CFG.env,
                 strategy=CFG.strategy, resolution=CFG.resolution, symbols=list(CFG.symbols),
-                capital=CFG.bot_capital_usd, risk=CFG.risk_per_trade, atr_mult=CFG.atr_stop_mult, rr=CFG.reward_risk,
+                paper_timeframes=list(CFG.paper_timeframes), capital=CFG.bot_capital_usd, risk=CFG.risk_per_trade, atr_mult=CFG.atr_stop_mult, rr=CFG.reward_risk,
                 rsi_level=CFG.rsi_pullback, max_trades=CFG.max_trades_per_day, daily_loss=CFG.daily_loss_limit,
                 cards=cards, paper=paper_books(), live=live_account(),
                 live_trades=read_trades(f"{CFG.log_dir}/trades.csv", "LIVE"), errors=errors)
