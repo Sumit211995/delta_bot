@@ -2,7 +2,7 @@
 
 **What it is, how it works, how it was built, and how to deploy it**
 
-Version 1.1 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange India perpetual futures (BTCUSD, ETHUSD, SOLUSD)
+Version 1.2 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange India perpetual futures (BTCUSD, ETHUSD, SOLUSD)
 
 > **Current mode: PAPER TRADING ONLY.** `DRY_RUN=1` is set in `.env`. The bot sends **no real orders**. It simulates
 > every trade with the same entry, stop loss and target it would use with real money, and records the results.
@@ -18,7 +18,7 @@ Version 1.1 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange Ind
 4. The strategy in depth: why it buys or sells
 5. Stop loss, target and position size, with a worked example
 6. Safety layer: how the bot protects your money
-7. Paper trading on 30m, 1h and 4h
+7. Paper trading: every record (30m, 1h, 4h, 4h trail, 1d trail)
 8. The dashboard
 9. Telegram alerts
 10. How we built it: the development story
@@ -54,6 +54,10 @@ When all three are true, there is a **signal**. The bot then:
 - in **paper mode** (now): records the trade and follows it candle by candle until the stop or target is hit,
 - in **live mode** (later): sends **one bracket order** to Delta, with the stop loss and target stored **on the exchange**.
 
+Next to the main 4h record, the bot keeps **paper-only** records of the same rules on other settings: 30m, 1h,
+**4h trail** (trailing stop instead of a fixed target) and **1d trail** (daily candles). They show live, with real
+prices, which version works best before any real money is used.
+
 It does **not** predict the future. It follows a fixed rule set that was tested on about 2.5 years of past data and
 showed a small edge. It wins only about **30%** of trades but makes money because each win is about 3× the size of
 each loss.
@@ -79,29 +83,50 @@ each loss.
           (EMA, RSI, ATR, │      │      │ (size, limits,│
            rules, levels) │      │      │  halt)        │
                           │  paper.py   │               │ backtest.py
-                          │ (simulate   │               │ (replays ~2.5 years
+                          │ (simulate   │               │ (replays the past
                           │  SL / TP /  │               │  for the "strategy
                           │  trailing)  │               │  history" section)
                           ▼      ▼      ▼               │
-                   state/*.json   logs/*.csv  ──────────┘
-                   (memory)       (trade journal)
-                          │
+                   state/*.json   logs/*.csv  ──────────┤
+                   (memory)       (trade journal)       │
+                          │                             │  history only, never trading
+                          │                  data/binance/*.pkl ◄── Binance public API
+                          │                  (7-year candle cache)   (free, 2019 →)
                           └──► notifier.py ──► Telegram (your phone)
 ```
 
+**Two programs, one set of files.** `bot.py` is the only program that can trade. `dashboard.py` only **reads** the
+same `state/` and `logs/` files plus public prices, so the web page can never place an order. On the server each runs
+in its own Docker container, and both containers share the folders on the server's disk.
+
+### 2.1 Tech stack at a glance
+
+| Layer | Technology | Where |
+|---|---|---|
+| Language | **Python 3.11** (bot, strategy, tests, web server) · HTML/CSS/JavaScript (dashboard page only) | all `*.py`, `dashboard.html` |
+| Data and maths | **pandas**, **NumPy** (candles, EMA/RSI/ATR, fast backtests) | `strategy.py`, `backtest.py` |
+| Exchange | **Delta Exchange India REST API v2**, signed with **HMAC-SHA256**, IPv4 forced for the IP whitelist | `delta_client.py` |
+| Long history (research only) | **Binance** public futures candles, cached on disk | `dashboard.py`, `data/binance/` |
+| Storage | Plain **JSON** (state) and **CSV** (trade journal) files, no database | `state/`, `logs/` |
+| Web dashboard | Python's built-in `http.server` + **TradingView Lightweight Charts**, read-only, bound to localhost | `dashboard.py`, `dashboard.html` |
+| Alerts | **Telegram Bot API** | `notifier.py` |
+| Tests | **pytest**, 17 tests | `tests/test_core.py` |
+| Packaging and hosting | **Docker + Docker Compose** on **Oracle Cloud Always Free** (Ubuntu, Mumbai/Hyderabad) | `Dockerfile`, `docker-compose.yml` |
+| Source and updates | **Git + GitHub** (`Sumit211995/delta_bot`); the server pulls from GitHub | |
+
 | File | Lines | Job |
 |---|---|---|
-| `bot.py` | ~370 | The main program. Runs forever, checks every 20 seconds whether a candle closed, and places or simulates trades for every record (4h, 30m, 1h, 4h trail). |
+| `bot.py` | ~370 | The main program. Runs forever, checks every 20 seconds whether a candle closed, and places or simulates trades for every record (4h, 30m, 1h, 4h trail, 1d trail). |
 | `strategy.py` | ~150 | The "brain": indicators (EMA, RSI, ATR), the buy/sell rules, stop/target levels, and the trailing-stop rule. |
 | `risk.py` | ~80 | Position size, daily loss limit, max drawdown halt, trades-per-day cap. Remembers state on disk. |
 | `paper.py` | ~45 | Simulates paper trades candle by candle: fixed stop/target, or trailing stop. Same rules as the backtest. |
-| `delta_client.py` | ~130 | Talks to Delta's API. Signs private requests with your secret key (HMAC-SHA256). |
+| `delta_client.py` | ~145 | Talks to Delta's API. Signs private requests with your secret key (HMAC-SHA256). |
 | `config.py` | ~160 | Reads `.env`, applies safe defaults, refuses unsafe settings (e.g. trailing exit in live mode). |
 | `notifier.py` | ~15 | Sends Telegram messages. |
-| `dashboard.py` + `dashboard.html` | ~530 + ~1,230 | The live web screen (read-only; it can never place an order). |
+| `dashboard.py` + `dashboard.html` | ~610 + ~1,330 | The live web screen (read-only; it can never place an order). Also downloads and caches the Binance long history. |
 | `backtest.py` | ~175 | Replays history. Contains the fast simulator used by the dashboard's strategy history. |
 | `train_model.py` | ~60 | Optional machine-learning filter (off by default; not needed). |
-| `tests/test_core.py` | ~210 | 15 automatic tests for the important logic. |
+| `tests/test_core.py` | ~220 | 17 automatic tests for the important logic. |
 | `docs/GUIDE.md`, `docs/build_pdf.py` | | This guide and the script that turns it into the PDF. |
 | `Dockerfile`, `docker-compose.yml` | | Packaging for running on a server. |
 
@@ -109,7 +134,7 @@ each loss.
 
 ## 3. One loop of the bot, step by step
 
-The bot is a simple loop. Every **20 seconds** it does this for each timeframe (4h, then paper 30m and 1h) and each coin:
+The bot is a simple loop. Every **20 seconds** it does this for each record (4h, then the paper records 30m, 1h, 4h trail and 1d trail) and each coin:
 
 ```
 1. Download the last ~400 candles for the coin        (public API, no key needed)
@@ -255,7 +280,7 @@ than 2% of a $27 wallet. The bot then **skips** the signal instead of over-riski
 
 ---
 
-## 7. Paper trading on 30m, 1h and 4h
+## 7. Paper trading: every record (30m, 1h, 4h, 4h trail, 1d trail)
 
 The strategy was designed and tested for **4h**. On 30m and 1h the backtest **lost money** (none of 91 setting
 combinations made money after fees). They are still paper-traded side by side so you can **see this for yourself**
@@ -580,7 +605,7 @@ Right now the bot runs on your laptop, so it only works while the laptop is on, 
 
 - **Always on**, with internet
 - A **fixed public IP**: Delta API keys only work from whitelisted IPs, and since April 2026 Indian brokers also require a static IP for API trading
-- **Persistent disk** for `state/` and `logs/` (the bot's memory and trade journal)
+- **Persistent disk** for `state/`, `logs/` (the bot's memory and trade journal) and `data/` (Binance history cache, ~50 MB)
 - About **150 MB RAM** for both containers. Any small VM is enough.
 
 ### 16.2 Options
@@ -597,6 +622,7 @@ Right now the bot runs on your laptop, so it only works while the laptop is on, 
 1. Push the latest code to GitHub: `git push -u origin main` (use your Sumit211995 personal access token as the password).
 2. Make sure `.env` is **not** on GitHub (it is in `.gitignore`). You will copy it to the server separately.
 3. Keep `DRY_RUN=1` in the `.env` you copy.
+4. Decide whether the server should **continue your laptop's paper records** (copy `state/` and `logs/` in Step 7) or start fresh.
 
 ### 16.4 Step by step: Oracle Cloud Always Free
 
@@ -635,20 +661,41 @@ exit                                     # log out and in again so the docker gr
 ```
 Time sync (`chrony`) matters: Delta rejects signed requests if the server clock is more than a few seconds off.
 
+**Add swap memory (needed on the 1 GB E2.1.Micro, harmless on Ampere).** Building the image installs pandas and NumPy,
+which can run out of memory on 1 GB:
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab     # keep it after reboots
+free -h                                                          # "Swap: 2.0Gi" should show
+```
+
 **Step 6: Get the code**
 ```bash
 ssh -i ~/Downloads/oracle.key ubuntu@<SERVER_IP>
 git clone https://github.com/Sumit211995/delta_bot.git
 cd delta_bot
-mkdir -p state logs
+mkdir -p state logs data
 ```
-(If the repo is private, use `https://<your-token>@github.com/Sumit211995/delta_bot.git` once, or set up an SSH deploy key.)
+If the repo is **private**, git asks for a username and password: type `Sumit211995` and paste a GitHub personal access
+token as the password. Do **not** put the token inside the URL (it would be saved in plain text in `.git/config`).
+To avoid typing it on every update, use a read-only **deploy key** instead: on the server run
+`ssh-keygen -t ed25519 -f ~/.ssh/delta_deploy -N ""`, add `~/.ssh/delta_deploy.pub` in GitHub → repo → *Settings →
+Deploy keys* (leave "write access" off), then clone with
+`GIT_SSH_COMMAND="ssh -i ~/.ssh/delta_deploy" git clone git@github.com:Sumit211995/delta_bot.git` and run
+`git config core.sshCommand "ssh -i ~/.ssh/delta_deploy"` inside the folder.
 
 **Step 7: Copy your `.env` safely** (run this on your **Mac**, not on the server)
 ```bash
 scp -i ~/Downloads/oracle.key ~/Documents/Project/delta_bot/.env ubuntu@<SERVER_IP>:~/delta_bot/.env
 ```
 Then on the server: `chmod 600 ~/delta_bot/.env` and check `grep DRY_RUN ~/delta_bot/.env` shows `DRY_RUN=1`.
+
+**Optional: continue your laptop's paper records.** Stop the laptop bot first (Ctrl+C), then from your Mac:
+```bash
+scp -i ~/Downloads/oracle.key -r ~/Documents/Project/delta_bot/state ~/Documents/Project/delta_bot/logs ubuntu@<SERVER_IP>:~/delta_bot/
+```
+Skip this to start the server's paper records from zero.
 
 **Step 8: Start the bot and dashboard**
 ```bash
@@ -657,14 +704,16 @@ docker compose up -d --build             # builds the image, starts both contain
 docker compose ps                        # both should be "running"
 docker compose logs -f delta-bot         # watch the bot (Ctrl+C only stops watching)
 ```
-You should get **"Bot started … PAPER 4h … also paper-trading 30m,1h"** on Telegram.
+You should get **"Bot started … PAPER 4h … also paper-trading 30m, 1h, 4h-trail, 1d-trail"** on Telegram.
+The first build takes about 3–6 minutes on the free VM.
 
 **Step 9: Check the connection from the server**
 ```bash
 docker compose exec delta-bot python bot.py --check      # wallet balance + positions; no orders
 docker compose exec delta-bot python bot.py --status     # paper records
 ```
-If `--check` says "IP not whitelisted" or "unauthorized", go back to Step 3.
+If `--check` says "IP not whitelisted" or "unauthorized", go back to Step 3. The bot always connects to Delta over
+**IPv4**, so whitelist the server's public **IPv4** address (`curl -4 ifconfig.me` on the server shows it).
 
 **Step 10: Open the dashboard from your laptop**
 
@@ -687,15 +736,18 @@ can still run `python dashboard.py` locally to view prices; it reads your laptop
 | See if it is running | `docker compose ps` |
 | Watch logs | `docker compose logs -f --tail 100 delta-bot` |
 | Paper results | `docker compose exec delta-bot python bot.py --status` |
-| Update to the latest code | `git pull && docker compose up -d --build` |
+| Update to the latest code | `git pull && docker compose up -d --build` (records and the Binance cache are kept) |
 | Restart | `docker compose restart` |
 | Stop everything | `docker compose down` (live positions keep their exchange SL/TP) |
 | Emergency close (live only) | `docker compose exec delta-bot python bot.py --panic` |
 | Back up records to your Mac | `scp -i ~/Downloads/oracle.key -r ubuntu@<SERVER_IP>:~/delta_bot/{state,logs} ~/delta_backup/` |
 | Change a setting | `nano .env` then `docker compose up -d` |
 
+**How an update flows:** change code on your Mac → `git commit` → `git push` → on the server `git pull && docker compose up -d --build`.
+Never edit code directly on the server; GitHub stays the single source of truth.
+
 - **Auto-restart:** `restart: unless-stopped` in `docker-compose.yml` restarts the bot after a crash or a server reboot.
-- **Memory:** `state/` and `logs/` are mounted from the server disk, so updates and restarts keep all records.
+- **Memory:** `state/`, `logs/` and `data/` are mounted from the server disk, so updates and restarts keep all records and the history cache.
 - **Monitoring:** Telegram tells you about starts, stops, trades and repeated errors. If you get no "Bot started"
   message after an update, check the logs.
 - **Security:** keep Ubuntu updated (`sudo apt update && sudo apt -y upgrade` monthly), never open port 8000, only use SSH keys.
@@ -705,8 +757,8 @@ can still run `python dashboard.py` locally to view prices; it reads your laptop
 - [ ] Code pushed to GitHub, `.env` **not** in the repo
 - [ ] Oracle VM running in Mumbai/Hyderabad, public IP noted (reserved if possible)
 - [ ] Server IP whitelisted on the Delta API key (Read + Trade, **no Withdrawal**)
-- [ ] Docker, Git and chrony installed
-- [ ] `.env` copied with `scp`, `chmod 600`, **`DRY_RUN=1`**
+- [ ] Docker, Git and chrony installed, 2 GB swap added
+- [ ] `.env` copied with `scp`, `chmod 600`, **`DRY_RUN=1`** (and `state/` + `logs/` if continuing laptop records)
 - [ ] `docker compose up -d --build` → both containers running
 - [ ] `bot.py --check` works from the server
 - [ ] Telegram "Bot started" received

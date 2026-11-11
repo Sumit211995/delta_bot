@@ -202,7 +202,7 @@ If the bot halts, read `halt_reason` with `python bot.py --status`. Delete `stat
 ## 6. Deploy for free (24/7)
 
 The bot needs **a machine that is always on, with a fixed public IP** (for Delta's IP whitelist), and **persistent disk**
-for `state/` and `logs/`. Both containers together use about 150 MB of RAM. **Deploy in paper mode (`DRY_RUN=1`) first.**
+for `state/`, `logs/` and `data/`. Both containers together use about 150 MB of RAM. **Deploy in paper mode (`DRY_RUN=1`) first.**
 The complete walkthrough with explanations is in [docs/GUIDE.md § 16](docs/GUIDE.md).
 
 | Option | Cost | Fixed IP | Verdict |
@@ -219,7 +219,8 @@ The complete walkthrough with explanations is in [docs/GUIDE.md § 16](docs/GUID
 3. **VM:** *Compute → Instances → Create instance* → image **Ubuntu 22.04/24.04**, shape **VM.Standard.E2.1.Micro** or
    **VM.Standard.A1.Flex** (both "Always Free eligible"; if Ampere is "out of capacity", use E2.1.Micro). Assign a public IPv4,
    **generate and download the SSH key**, create, and copy the **public IP**. Optional: make it a **reserved** IP so it never changes.
-4. **Delta:** whitelist the server IP on your API key (**Read Data + Trading only, never Withdrawal**).
+4. **Delta:** whitelist the server's public **IPv4** on your API key (**Read Data + Trading only, never Withdrawal**).
+   The bot always connects over IPv4.
 5. **Install** (from your Mac):
    ```bash
    chmod 400 ~/Downloads/oracle.key
@@ -227,16 +228,22 @@ The complete walkthrough with explanations is in [docs/GUIDE.md § 16](docs/GUID
    sudo apt update && sudo apt -y upgrade
    sudo apt install -y docker.io docker-compose-v2 git chrony     # chrony keeps the clock exact (API signatures)
    sudo systemctl enable --now docker chrony
+   sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab      # swap: the 1 GB VM needs it to build pandas
    sudo usermod -aG docker ubuntu && exit                          # log in again after this
    ssh -i ~/Downloads/oracle.key ubuntu@<SERVER_IP>
-   git clone https://github.com/Sumit211995/delta_bot.git && cd delta_bot && mkdir -p state logs
+   git clone https://github.com/Sumit211995/delta_bot.git && cd delta_bot && mkdir -p state logs data
    ```
+   Private repo: git asks for a username (`Sumit211995`) and password (paste a GitHub personal access token). Never put the
+   token in the URL. For password-free updates use a read-only deploy key (see the guide, § 16.4 step 6).
 6. **Copy your `.env`** (run on your **Mac**), then lock it down on the server:
    ```bash
    scp -i ~/Downloads/oracle.key ~/Documents/Project/delta_bot/.env ubuntu@<SERVER_IP>:~/delta_bot/.env
    # on the server:
    chmod 600 ~/delta_bot/.env && grep DRY_RUN ~/delta_bot/.env      # must show DRY_RUN=1 (paper)
    ```
+   Optional, to **continue your laptop's paper records**: stop the laptop bot, then from the Mac
+   `scp -i ~/Downloads/oracle.key -r ~/Documents/Project/delta_bot/state ~/Documents/Project/delta_bot/logs ubuntu@<SERVER_IP>:~/delta_bot/`
 7. **Start** (on the server):
    ```bash
    cd ~/delta_bot
@@ -245,7 +252,7 @@ The complete walkthrough with explanations is in [docs/GUIDE.md § 16](docs/GUID
    docker compose exec delta-bot python bot.py --check   # connection + wallet, no orders
    docker compose logs -f delta-bot                  # watch it (Ctrl+C only stops watching)
    ```
-   You should get **"Bot started … PAPER 4h … also paper-trading 30m,1h"** on Telegram.
+   You should get **"Bot started … PAPER 4h … also paper-trading 30m, 1h, 4h-trail, 1d-trail"** on Telegram.
 8. **Stop the laptop bot.** Only one bot should run per Delta account.
 
 **Dashboard on the server:** it listens only on the server itself (safer). From your Mac run
@@ -260,10 +267,11 @@ docker compose restart                                  # restart
 docker compose down                                     # stop (live positions keep their SL/TP on Delta)
 scp -i ~/Downloads/oracle.key -r ubuntu@<SERVER_IP>:~/delta_bot/{state,logs} ~/delta_backup/   # backup (from Mac)
 ```
-`state/` and `logs/` live on the VM's disk (mounted by `docker-compose.yml`), so they survive restarts and updates.
+`state/`, `logs/` and `data/` live on the VM's disk (mounted by `docker-compose.yml`), so they survive restarts and updates.
+Update flow: change code on the Mac → `git commit` → `git push` → on the server `git pull && docker compose up -d --build`.
 
 **Deploy checklist:** code pushed · `.env` not in Git · VM in Mumbai/Hyderabad · server IP whitelisted (no Withdrawal) ·
-Docker + chrony installed · `.env` copied, `chmod 600`, `DRY_RUN=1` · `docker compose up -d --build` · `--check` OK ·
+Docker + chrony + swap installed · `.env` copied, `chmod 600`, `DRY_RUN=1` · `docker compose up -d --build` · `--check` OK ·
 Telegram "Bot started" received · dashboard opens through the SSH tunnel · laptop bot stopped.
 
 ---
