@@ -6,6 +6,10 @@ Strategies (STRATEGY in .env):
             below RSI_PULLBACK (40) and crosses back above it. Mirror image for shorts (RSI 60).
             Walk-forward tested on BTC + ETH 4h, 2023-2026: small but positive edge on both coins.
   ema_cross the original EMA20/50 crossover with EMA200 trend filter (loses money on 1h in recent years).
+
+High-volatility filter (VOL_FILTER_BOOKS, default 1d-trail): skip a signal when ATR/close is in the top 20% of the
+last 500 candles. Chosen on 2019-2023 Binance data, checked on 2024-2026 (research/addon_filters.py): 1d-trail
+PF 3.22 -> 4.28 (train) and 1.57 -> 1.69 (test), max drawdown 12.5R -> 8.1R in the test years.
 """
 from dataclasses import dataclass
 from functools import lru_cache
@@ -35,7 +39,19 @@ def add_indicators(df: pd.DataFrame, cfg) -> pd.DataFrame:
     gain = diff.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
     loss = (-diff.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
     d["rsi"] = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
+    if vol_filter_on(cfg):
+        n = cfg.vol_filter_n
+        d["atr_rank"] = (d["atr"] / c).rolling(n, min_periods=n // 2).rank(pct=True)
     return d
+
+
+def vol_filter_on(cfg) -> bool:
+    return cfg.book in getattr(cfg, "vol_filter_books", ())
+
+
+def vol_blocked(row, cfg) -> bool:
+    """True when this candle's volatility is too high for this book (unknown rank = not blocked)."""
+    return vol_filter_on(cfg) and bool(row.get("atr_rank", np.nan) > cfg.vol_filter_max)
 
 
 def features(d: pd.DataFrame, i: int, side: str) -> list:
@@ -98,7 +114,7 @@ def signal_at(d: pd.DataFrame, i: int, cfg):
     if np.isnan(row["atr"]) or np.isnan(row["rsi"]) or np.isnan(prev["rsi"]):
         return None
     side, reason = STRATEGIES[cfg.strategy](d, i, row, prev, cfg)
-    if side is None:
+    if side is None or vol_blocked(row, cfg):
         return None
     return Signal(side, float(row["atr"]), reason, features(d, i, side))
 
@@ -147,6 +163,8 @@ def signals_vectorized(d: pd.DataFrame, cfg) -> np.ndarray:
         sell = dn & (c < trend) & (rsi > 30)
     valid = d["atr"].notna() & rsi.notna() & prsi.notna()
     valid &= pd.Series(np.arange(len(d)) >= cfg.ema_trend + 2, index=d.index)
+    if vol_filter_on(cfg):
+        valid &= ~(d["atr_rank"] > cfg.vol_filter_max)
     out = np.zeros(len(d), dtype=int)
     out[(buy & valid).to_numpy()] = 1
     out[(sell & valid & ~buy).to_numpy()] = -1

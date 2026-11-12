@@ -27,7 +27,7 @@ import paper
 from config import load_config, validate
 from delta_client import DeltaClient, DeltaError
 from risk import RiskManager
-from strategy import add_indicators, levels, ml_pass, signal_at
+from strategy import add_indicators, levels, ml_pass, signal_at, vol_filter_on
 
 LOG_COLUMNS = ["time", "symbol", "event", "side", "size", "entry", "sl", "tp", "exit", "pnl", "equity",
                "live", "order_id", "reason"]
@@ -43,8 +43,9 @@ def fmt_t(t: int) -> str:
     return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def fetch_closed_candles(client, cfg, symbol, bars=400) -> pd.DataFrame:
+def fetch_closed_candles(client, cfg, symbol, bars=None) -> pd.DataFrame:
     now = int(time.time())
+    bars = bars or (max(400, cfg.vol_filter_n + 60) if vol_filter_on(cfg) else 400)   # vol filter ranks 500 bars
     rows = client.get_candles(symbol, cfg.resolution, now - (bars + 5) * cfg.period_seconds, now)
     df = pd.DataFrame(rows)[["time", "open", "high", "low", "close", "volume"]].astype(float)
     df = df[df["time"] + cfg.period_seconds <= now]            # drop the still-forming candle

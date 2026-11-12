@@ -61,6 +61,9 @@ class Config:
     telegram_chat_id: str = ""
     ml_model_path: str = ""
     ml_threshold: float = 0.55
+    vol_filter_books: tuple = ("1d-trail",)   # books that skip signals when volatility is unusually high (research)
+    vol_filter_n: int = 500                   # ATR% is ranked against the last N candles
+    vol_filter_max: float = 0.8               # skip when ATR% rank > this (top 20% most volatile)
     state_file: str = ""                      # override; default depends on mode (see state_path)
     log_dir: str = "logs"
 
@@ -91,7 +94,13 @@ class Config:
 
 def load_config() -> Config:
     _load_env()
-    g = os.getenv
+
+    def g(key, default=None):
+        # docker compose keeps "KEY=   # comment" as the value "# comment": treat a comment-only value as empty
+        v = os.getenv(key)
+        if v is not None and v.strip().startswith("#"):
+            v = ""
+        return default if v is None or (v == "" and default is not None) else v.split(" #")[0].strip()
     raw = g("SYMBOLS") or g("SYMBOL") or "BTCUSD"
     symbols = tuple(x.strip().upper() for x in raw.split(",") if x.strip())
     dry = g("DRY_RUN", "1") == "1"
@@ -124,6 +133,10 @@ def load_config() -> Config:
         telegram_chat_id=g("TELEGRAM_CHAT_ID", ""),
         ml_model_path=g("ML_MODEL_PATH", ""),
         ml_threshold=float(g("ML_THRESHOLD", "0.55")),
+        vol_filter_books=tuple(x.strip() for x in g("VOL_FILTER_BOOKS", "1d-trail").replace("none", "").split(",")
+                               if x.strip()),
+        vol_filter_n=int(g("VOL_FILTER_N", "500")),
+        vol_filter_max=float(g("VOL_FILTER_MAX", "0.8")),
     )
 
 

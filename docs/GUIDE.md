@@ -544,6 +544,32 @@ It **cut profit in every case** (e.g. 4h trail +195R → +118R to +125R) and is 
 | Daily trend filter on 4h trades | Fewer trades, less profit in every version |
 | Daily candles with the fixed 1:3 target | Lost money on Delta and on Binance since 2023 |
 
+### 13.5 Popular add-ons, tested Nov 2026 (`research/addon_filters.py`)
+
+Method: Binance BTC + ETH + SOL. Every setting was chosen on **2019–2023 only**, then checked on **2024–2026**
+(untouched). An add-on is kept only if it raises profit factor in **both** periods, keeps ≥ 60% of the trades and
+does not raise the drawdown. Each idea had at most 6 settings, so luck has little room.
+
+| Idea (best setting on 2019–23) | Book | PF 2019–23 | PF 2024–26 | Max DD 2024–26 | Kept? |
+|---|---|---|---|---|---|
+| Baseline pullback | 4h | 1.34 | 1.09 | 29.9R | — |
+| BTC above its EMA200 before trading ETH/SOL | 4h | 1.44 | 1.05 | 22.4R | No |
+| Funding-rate extremes (skip crowded side) | 4h | 1.53 | 1.08 | 23.5R | No |
+| Skip top-20% volatility | 4h | 1.48 | 1.08 | 19.5R | No |
+| Baseline pullback | 4h trail | 1.48 | 1.47 | 23.9R | — |
+| BTC regime (daily EMA200) | 4h trail | 1.54 | 1.41 | 25.9R | No |
+| Funding-rate extremes | 4h trail | 1.63 | 1.49 | 18.9R | No: +0.02 PF is noise and total profit fell (84.6R → 71.3R) |
+| Skip top-20% volatility | 4h trail | 1.60 | 1.58 | 20.8R | No: drawdown rose in 2019–23 (12.1R → 15.7R) |
+| Baseline pullback | 1d trail | 3.22 | 1.57 | 12.5R | — |
+| BTC regime (EMA200) | 1d trail | 3.84 | 1.67 | 11.2R | No: the volatility filter alone was better on 2019–23 |
+| Funding-rate extremes | 1d trail | 3.62 | 1.44 | 11.5R | No |
+| **Skip top-20% volatility (500 candles)** | **1d trail** | **4.28** | **1.69** | **8.1R** | **Yes** (`VOL_FILTER_BOOKS=1d-trail`) |
+| Donchian 20-bar breakout, ATR stop, 1:2 (standalone) | 4h | 1.29 | 1.09 | 51.1R | No: drawdown twice the pullback |
+| Donchian 20-bar breakout (standalone) | 1d | 2.67 | 1.64 | 9.9R | No: no better than 1d-trail pullback with the filter |
+
+Honest note: the 1d-trail record has about 45–55 trades per period, so the gain is small and could be luck. It
+is a paper record only; the live 4h book is unchanged because nothing improved it in both periods.
+
 ---
 
 ## 14. Daily use: commands
@@ -593,6 +619,7 @@ Run these in the project folder (`cd ~/Documents/Project/delta_bot`):
 | `MAX_TRADES_PER_DAY` | `3` | Per timeframe record |
 | `FEE_RATE` | `0.0006` | Per side, used for paper P&L and backtests |
 | `TELEGRAM_TOKEN` / `TELEGRAM_CHAT_ID` | set | Phone alerts |
+| `VOL_FILTER_BOOKS` / `VOL_FILTER_N` / `VOL_FILTER_MAX` | `1d-trail` / `500` / `0.8` | Skip signals when volatility is in its top 20% (see 13.5); `none` = off |
 
 ---
 
