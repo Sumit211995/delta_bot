@@ -2,11 +2,20 @@
 
 **What it is, how it works, how it was built, and how to deploy it**
 
-Version 1.2 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange India perpetual futures (BTCUSD, ETHUSD, SOLUSD)
+Version 1.3 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange India perpetual futures (BTCUSD, ETHUSD, SOLUSD)
 
 > **Current mode: PAPER TRADING ONLY.** `DRY_RUN=1` is set in `.env`. The bot sends **no real orders**. It simulates
 > every trade with the same entry, stop loss and target it would use with real money, and records the results.
 > Real trading only starts if *you* change `DRY_RUN=0` **and** set `LIVE_CONFIRM=I_UNDERSTAND_THE_RISK`.
+
+### What changed in version 1.3 (13 Nov 2026)
+
+| Change | Why |
+|---|---|
+| **Fix:** a `.env` line like `ML_MODEL_PATH=   # comment` was read by Docker as the file name `# comment` | On the server every real signal crashed, so the paper records stayed empty for ~2 days. `config.py` now treats a comment-only value as empty, and `.env.example` keeps comments on their own line. |
+| **1d trail skips very volatile days** (ATR% in its top 20% of 500 candles) | Tested walk-forward: PF 1.57 → 1.69 and max drawdown 12.5R → 8.1R on unseen 2024–26 data (section 13.5). |
+| BTC trend filter, funding-rate filter and a Donchian breakout strategy were tested | None improved results in both periods, so the 4h strategy is unchanged (section 13.5). |
+| Dashboard on your phone through **Tailscale** | Private link, no open ports (section 16.5). |
 
 ---
 
@@ -110,7 +119,7 @@ in its own Docker container, and both containers share the folders on the server
 | Storage | Plain **JSON** (state) and **CSV** (trade journal) files, no database | `state/`, `logs/` |
 | Web dashboard | Python's built-in `http.server` + **TradingView Lightweight Charts**, read-only, bound to localhost | `dashboard.py`, `dashboard.html` |
 | Alerts | **Telegram Bot API** | `notifier.py` |
-| Tests | **pytest**, 17 tests | `tests/test_core.py` |
+| Tests | **pytest**, 20 tests | `tests/` |
 | Packaging and hosting | **Docker + Docker Compose** on **Oracle Cloud Always Free** (Ubuntu, Mumbai/Hyderabad) | `Dockerfile`, `docker-compose.yml` |
 | Source and updates | **Git + GitHub** (`Sumit211995/delta_bot`); the server pulls from GitHub | |
 
@@ -126,7 +135,8 @@ in its own Docker container, and both containers share the folders on the server
 | `dashboard.py` + `dashboard.html` | ~610 + ~1,330 | The live web screen (read-only; it can never place an order). Also downloads and caches the Binance long history. |
 | `backtest.py` | ~175 | Replays history. Contains the fast simulator used by the dashboard's strategy history. |
 | `train_model.py` | ~60 | Optional machine-learning filter (off by default; not needed). |
-| `tests/test_core.py` | ~220 | 17 automatic tests for the important logic. |
+| `tests/` | ~300 | 20 automatic tests: core logic, `.env` parsing, the volatility filter. |
+| `research/addon_filters.py` | ~250 | Walk-forward test of popular add-ons (BTC regime, funding rate, ATR filter, Donchian). |
 | `docs/GUIDE.md`, `docs/build_pdf.py` | | This guide and the script that turns it into the PDF. |
 | `Dockerfile`, `docker-compose.yml` | | Packaging for running on a server. |
 
@@ -292,7 +302,7 @@ with live data before trusting any timeframe with real money.
 | **1h** | every hour | **paper only, always** | `state/paper_state_1h.json`, `logs/paper_trades_1h.csv` |
 | **30m** | every 30 minutes | **paper only, always** | `state/paper_state_30m.json`, `logs/paper_trades_30m.csv` |
 | **4h trail** | every 4 hours | **paper only, always**: same signals, trailing stop instead of a fixed target | `state/paper_state_4h-trail.json`, `logs/paper_trades_4h-trail.csv` |
-| **1d trail** | once a day (05:30 IST) | **paper only, always**: daily candles with the trailing stop | `state/paper_state_1d-trail.json`, `logs/paper_trades_1d-trail.csv` |
+| **1d trail** | once a day (05:30 IST) | **paper only, always**: daily candles with the trailing stop; skips signals on very volatile days (top 20% ATR%) | `state/paper_state_1d-trail.json`, `logs/paper_trades_1d-trail.csv` |
 
 - Each timeframe starts with its own **$500** paper balance (`BOT_CAPITAL_USD`) and its own limits.
 - `PAPER_TIMEFRAMES=30m,1h` in `.env` controls the extra timeframes. Even when 4h goes live, these stay paper-only.
@@ -586,7 +596,7 @@ Run these in the project folder (`cd ~/Documents/Project/delta_bot`):
 | `python bot.py --paper-tf none` | Run only the main timeframe (no extra paper timeframes) |
 | `python bot.py --symbols ETHUSD` | Override the coins for this run |
 | `python backtest.py --symbol ETHUSD --resolution 4h` | Re-run the backtest with a per-year breakdown |
-| `python -m pytest -q tests` | Run the automatic tests (should say "12 passed") |
+| `python -m pytest -q tests` | Run the automatic tests (should say "20 passed") |
 | `python bot.py --panic` | **Emergency:** cancel all orders and close positions on the bot's coins (manual trades too) |
 
 ---
@@ -768,7 +778,8 @@ can still run `python dashboard.py` locally to view prices; it reads your laptop
 | Stop everything | `docker compose down` (live positions keep their exchange SL/TP) |
 | Emergency close (live only) | `docker compose exec delta-bot python bot.py --panic` |
 | Back up records to your Mac | `scp -i ~/Downloads/oracle.key -r ubuntu@<SERVER_IP>:~/delta_bot/{state,logs} ~/delta_backup/` |
-| Change a setting | `nano .env` then `docker compose up -d` |
+| Change a setting | `nano .env` then `docker compose up -d` (comments on their **own line**, never after a value) |
+| Open the dashboard on phone / laptop | Tailscale app signed in → `https://<server>.<tailnet>.ts.net` (set up once with `sudo tailscale serve --bg http://127.0.0.1:8000`) |
 
 **How an update flows:** change code on your Mac → `git commit` → `git push` → on the server `git pull && docker compose up -d --build`.
 Never edit code directly on the server; GitHub stays the single source of truth.
@@ -789,7 +800,7 @@ Never edit code directly on the server; GitHub stays the single source of truth.
 - [ ] `docker compose up -d --build` → both containers running
 - [ ] `bot.py --check` works from the server
 - [ ] Telegram "Bot started" received
-- [ ] Dashboard opens through the SSH tunnel
+- [ ] Dashboard opens through Tailscale (or the SSH tunnel)
 - [ ] Laptop bot stopped (only one bot running)
 
 ---
@@ -844,7 +855,9 @@ Never edit code directly on the server; GitHub stays the single source of truth.
 | Bot says HALTED | Max drawdown was hit, or the protection check failed. Read the reason in `--status`, review, then delete the matching `state/*.json` file to reset. |
 | The dashboard shows nothing | Is `python dashboard.py` running? Refresh the page. Check that internet works. |
 | Will the stop loss work if my laptop is off? | **Live:** yes, SL/TP are stored on Delta. **Paper:** paper trades are only checked while the bot runs; it catches up on the candles it missed when restarted. |
-| Can the bot trade Indian stocks (Upstox)? | Not yet. It needs a separate broker adapter, a backtest on Indian markets, and a static IP under SEBI's 2026 rules. |
+| Paper records stay empty and the log shows `No such file or directory: '# e.g. ...'` | A `.env` value had a comment after it (`KEY=   # note`); Docker passes the comment as the value. Fixed in v1.3; keep comments on their own line. |
+| A paper trade does not show in my Delta app | Correct: paper trades are simulated and only appear on the dashboard and Telegram. |
+| Can the bot trade Indian stocks (Upstox)? | That is a separate project, **upstox_bot** (paper only): index option selling and buying, stock options and share swing trading. See its own guide. |
 | Is the API free? | Yes. Delta and Telegram APIs are free. You pay only normal trading fees (0.05% taker + 18% GST) on real trades. |
 | Can I add more coins? | Test them first (`backtest.py --symbol X`). Of 14 popular coins tested, only BTC, ETH and SOL qualified. |
 
