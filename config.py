@@ -62,7 +62,7 @@ class Config:
     ml_model_path: str = ""
     ml_threshold: float = 0.55
     vol_filter_books: tuple = ("1d-trail",)   # books that skip signals when volatility is unusually high (research)
-    paper_shock_timeframes: tuple = ("4h",)   # PAPER-ONLY shock-follow books (research/bigmoney_news.py), trailing stop
+    paper_shock_timeframes: tuple = ("4h", "1h")   # PAPER-ONLY shock-follow books (research/bigmoney_news.py), trailing stop
     shock_k: float = 3.0                      # shock candle: body >= shock_k x ATR (of the candle before) ...
     shock_vol: float = 3.0                    # ... on volume >= shock_vol x its 20-candle average
     vol_filter_n: int = 500                   # ATR% is ranked against the last N candles
@@ -120,7 +120,7 @@ def load_config() -> Config:
         resolution=g("RESOLUTION", "4h"),
         paper_timeframes=tuple(x.strip() for x in g("PAPER_TIMEFRAMES", "").split(",") if x.strip()),
         paper_trail_timeframes=tuple(x.strip() for x in g("PAPER_TRAIL_TIMEFRAMES", "").split(",") if x.strip()),
-        paper_shock_timeframes=tuple(x.strip() for x in g("PAPER_SHOCK_TIMEFRAMES", "4h").replace("none", "").split(",")
+        paper_shock_timeframes=tuple(x.strip() for x in g("PAPER_SHOCK_TIMEFRAMES", "4h,1h").replace("none", "").split(",")
                                      if x.strip()),
         shock_k=float(g("SHOCK_K", "3.0")),
         shock_vol=float(g("SHOCK_VOL", "3.0")),

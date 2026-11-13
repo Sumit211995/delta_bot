@@ -13,6 +13,7 @@ Version 1.4 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange Ind
 | Change | Why |
 |---|---|
 | **New paper record: 4h shock trail** ("big news" candles) | A 4h candle that moves ≥ 3 × ATR on ≥ 3 × normal volume, in the EMA200 direction, is followed with the trailing stop. Binance 2019–23 PF 3.17 → 2024–26 PF 2.93; Delta's own candles 2024–26 PF 2.58 (section 13.6). Paper only. |
+| **New paper record: 1h shock trail** | The same shock rule on 1-hour candles (same settings, no new tuning): Binance 2019–23 PF 1.42 → 2024–26 PF 1.70; Delta's own 1h candles 2024–26: 202 trades, PF 2.02, +113R. Fading shocks lost on every timeframe (section 13.6). Paper only. |
 | Taker flow ("big money": aggressive buyers vs sellers), CVD and shock filters on the pullback signals were tested | None improved both periods clearly; taker volume is also not in Delta's candle API, so it could not run live (section 13.6). |
 
 ### What changed in version 1.3 (13 Nov 2026)
@@ -311,6 +312,7 @@ with live data before trusting any timeframe with real money.
 | **30m** | every 30 minutes | **paper only, always** | `state/paper_state_30m.json`, `logs/paper_trades_30m.csv` |
 | **4h trail** | every 4 hours | **paper only, always**: same signals, trailing stop instead of a fixed target | `state/paper_state_4h-trail.json`, `logs/paper_trades_4h-trail.csv` |
 | **1d trail** | once a day (05:30 IST) | **paper only, always**: daily candles with the trailing stop; skips signals on very volatile days (top 20% ATR%) | `state/paper_state_1d-trail.json`, `logs/paper_trades_1d-trail.csv` |
+| **1h shock trail** | every hour | **paper only, always**: the same shock signal on 1-hour candles (section 13.6) | `state/paper_state_1h-shock-trail.json`, `logs/paper_trades_1h-shock-trail.csv` |
 | **4h shock trail** | every 4 hours | **paper only, always**: a different signal, a "big news" shock candle in the trend direction, with the trailing stop (section 13.6) | `state/paper_state_4h-shock-trail.json`, `logs/paper_trades_4h-shock-trail.csv` |
 
 - Each timeframe starts with its own **$500** paper balance (`BOT_CAPITAL_USD`) and its own limits.
@@ -617,12 +619,25 @@ the funding rate was already rejected in 13.5.
 **Checked on Delta's own candles** (Apr 2024 – Nov 2026, Delta volume): the chosen rule made 26 trades, 46% wins,
 **PF 2.58, +20.8R**, worst drawdown 6.4R, so it is not a Binance-only effect.
 
-**The new record "4h shock trail"** (`PAPER_SHOCK_TIMEFRAMES=4h`, `SHOCK_K=3`, `SHOCK_VOL=3`):
+**The new record "4h shock trail"** (`PAPER_SHOCK_TIMEFRAMES=4h,1h`, `SHOCK_K=3`, `SHOCK_VOL=3`):
 - **Signal** after a closed 4h candle whose body is ≥ 3 × ATR on ≥ 3 × its 20-candle average volume; buy if it closed
   up **and** above the EMA200, sell if it closed down **and** below the EMA200.
 - **Exit** like 4h trail: stop 1.5 × ATR, no target; after +1R the stop trails 2 × ATR behind the best close.
 - **Paper only** (the config refuses trailing exits in live mode). It needs only Delta's own candles (OHLC + volume).
 - **Expect** about one signal a month per coin, and long quiet spells; most profit comes from a few big trends.
+
+**1-hour candles (`research/shock_1h.py`).** The same follow / fade test on 1h (fees and slippage included):
+
+| 1h rule | 2019–23: trades · PF · net R · max DD | 2024–26: trades · PF · net R · max DD |
+|---|---|---|
+| Fade the shock (every k, with or without trend) | PF 0.5–0.7 (loses) | PF 0.5–0.7 (loses) |
+| Follow, k = 2.5, EMA200, trail (best on 2019–23) | 576 · 1.51 · +170 · 29 | 453 · 1.38 · +103 · 30 |
+| **Follow, k = 3, EMA200, trail (same setting as 4h)** | **376 · 1.42 · +93 · 24** | **281 · 1.70 · +115 · 22** |
+| Follow, k = 4, EMA200, trail | 181 · 1.28 · +31 · 18 | 112 · 2.24 · +75 · 14 |
+| **Delta's own 1h candles, k = 3, Jan 2024 → Nov 2026** | | **202 trades · 46% win · PF 2.02 · +113R** |
+
+The 1h record uses the 4h settings (k = 3) rather than a separately tuned value. It trades far more often than 4h
+(about 6 signals a month across the 3 coins) with a lower PF, so expect deeper losing runs (24–30R in the tests).
 
 **Why not taker flow?** Besides the mixed results, Delta's candle API returns only open, high, low, close and volume,
 not the taker-buy volume, so a taker filter could not be computed by the live bot from Delta data.

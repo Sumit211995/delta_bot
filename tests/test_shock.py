@@ -33,7 +33,8 @@ def test_shock_book_is_paper_trail_and_named(monkeypatch):
     cfg = _cfg(monkeypatch)
     books = bot.books_for(dataclasses.replace(cfg, paper_timeframes=(), paper_trail_timeframes=()))
     sh = [c for c in books if c.strategy == "shock"]
-    assert len(sh) == 1 and sh[0].book == "4h-shock-trail" and sh[0].exit_mode == "trail" and sh[0].dry_run
+    assert [c.book for c in sh] == ["4h-shock-trail", "1h-shock-trail"]
+    assert all(c.exit_mode == "trail" and c.dry_run for c in sh)
     assert books[0].strategy == "pullback" and books[0].book == cfg.book       # main book unchanged
 
 
@@ -49,3 +50,10 @@ def test_shock_signal_live_matches_vectorized(monkeypatch):
     assert (vec == live).all()
     assert vec[i] == 1 and vec.sum() == 1                       # only the shock candle fires, long (uptrend)
     assert signals_vectorized(d, dataclasses.replace(cfg, shock_vol=6.0))[i] == 0   # volume rule matters
+
+
+def test_default_shock_books_are_4h_and_1h(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "_load_env", lambda: None)
+    monkeypatch.delenv("PAPER_SHOCK_TIMEFRAMES", raising=False)
+    assert config.load_config().paper_shock_timeframes == ("4h", "1h")
