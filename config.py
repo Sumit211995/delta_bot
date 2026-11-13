@@ -62,6 +62,9 @@ class Config:
     ml_model_path: str = ""
     ml_threshold: float = 0.55
     vol_filter_books: tuple = ("1d-trail",)   # books that skip signals when volatility is unusually high (research)
+    paper_shock_timeframes: tuple = ("4h",)   # PAPER-ONLY shock-follow books (research/bigmoney_news.py), trailing stop
+    shock_k: float = 3.0                      # shock candle: body >= shock_k x ATR (of the candle before) ...
+    shock_vol: float = 3.0                    # ... on volume >= shock_vol x its 20-candle average
     vol_filter_n: int = 500                   # ATR% is ranked against the last N candles
     vol_filter_max: float = 0.8               # skip when ATR% rank > this (top 20% most volatile)
     state_file: str = ""                      # override; default depends on mode (see state_path)
@@ -70,7 +73,8 @@ class Config:
     @property
     def book(self) -> str:
         """Name of this paper record: '4h', '1h', ... or '4h-trail' for the trailing-stop variant."""
-        return self.resolution + ("-trail" if self.exit_mode == "trail" else "")
+        return (self.resolution + ("-shock" if self.strategy == "shock" else "")
+                + ("-trail" if self.exit_mode == "trail" else ""))
 
     @property
     def state_path(self) -> str:
@@ -116,6 +120,10 @@ def load_config() -> Config:
         resolution=g("RESOLUTION", "4h"),
         paper_timeframes=tuple(x.strip() for x in g("PAPER_TIMEFRAMES", "").split(",") if x.strip()),
         paper_trail_timeframes=tuple(x.strip() for x in g("PAPER_TRAIL_TIMEFRAMES", "").split(",") if x.strip()),
+        paper_shock_timeframes=tuple(x.strip() for x in g("PAPER_SHOCK_TIMEFRAMES", "4h").replace("none", "").split(",")
+                                     if x.strip()),
+        shock_k=float(g("SHOCK_K", "3.0")),
+        shock_vol=float(g("SHOCK_VOL", "3.0")),
         trail_activate_r=float(g("TRAIL_ACTIVATE_R", "1.0")),
         trail_atr=float(g("TRAIL_ATR", "2.0")),
         strategy=g("STRATEGY", "pullback").lower(),
@@ -152,7 +160,8 @@ def validate(cfg: Config) -> None:
         raise SystemExit("The trailing-stop exit is PAPER ONLY for now (live orders use a fixed SL + TP bracket)")
     if cfg.trail_activate_r < 0 or cfg.trail_atr <= 0:
         raise SystemExit("TRAIL_ACTIVATE_R must be >= 0 and TRAIL_ATR > 0")
-    bad = [tf for tf in cfg.paper_timeframes + cfg.paper_trail_timeframes if tf not in RESOLUTION_SECONDS]
+    bad = [tf for tf in cfg.paper_timeframes + cfg.paper_trail_timeframes + cfg.paper_shock_timeframes
+           if tf not in RESOLUTION_SECONDS]
     if bad:
         raise SystemExit(f"PAPER_TIMEFRAMES / PAPER_TRAIL_TIMEFRAMES has unknown timeframe(s) {bad}; use {list(RESOLUTION_SECONDS)}")
     if cfg.strategy not in ("pullback", "ema_cross"):

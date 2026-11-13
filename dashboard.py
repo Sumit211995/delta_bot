@@ -196,7 +196,8 @@ def read_trades(path, source):
 def book_cfg(book):
     tf = book.split("-")[0]
     return dataclasses.replace(CFG, resolution=tf, dry_run=True, state_file="",
-                               exit_mode="trail" if book.endswith("-trail") else "fixed")
+                               exit_mode="trail" if book.endswith("-trail") else "fixed",
+                               strategy="shock" if "-shock" in book else CFG.strategy)
 
 
 def book_cfgs():
@@ -204,16 +205,18 @@ def book_cfgs():
     variants (PAPER_TRAIL_TIMEFRAMES)."""
     fixed = [tf for tf in TIMEFRAMES if tf == CFG.resolution or tf in CFG.paper_timeframes]
     books = fixed + [f"{tf}-trail" for tf in TIMEFRAMES if tf in CFG.paper_trail_timeframes]
+    books += [f"{tf}-shock-trail" for tf in TIMEFRAMES if tf in CFG.paper_shock_timeframes]
     return [(b, book_cfg(b)) for b in books]
 
 
 def hist_books():
     """Strategy-history columns: every timeframe with the fixed exit (for comparison) + the trailing variants."""
-    return list(TIMEFRAMES) + [f"{tf}-trail" for tf in TIMEFRAMES if tf in CFG.paper_trail_timeframes]
+    return (list(TIMEFRAMES) + [f"{tf}-trail" for tf in TIMEFRAMES if tf in CFG.paper_trail_timeframes]
+            + [f"{tf}-shock-trail" for tf in TIMEFRAMES if tf in CFG.paper_shock_timeframes])
 
 
 def book_label(book):
-    return book.replace("-trail", " trail")
+    return book.replace("-shock", " shock").replace("-trail", " trail")
 
 
 def utc_epoch(text):
@@ -487,7 +490,8 @@ def binance_candles(sym, tf, progress=None):
 def _hist_book(sym, book, src="delta"):
     from backtest import simulate_trades
     tf = book.split("-")[0]
-    cfg = dataclasses.replace(tf_cfg(tf), exit_mode="trail" if book.endswith("-trail") else "fixed")
+    cfg = dataclasses.replace(tf_cfg(tf), exit_mode="trail" if book.endswith("-trail") else "fixed",
+                              strategy="shock" if "-shock" in book else CFG.strategy)
     if src == "binance":
         raw = binance_candles(sym, tf)
     else:

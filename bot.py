@@ -69,6 +69,11 @@ def books_for(cfg):
                                  paper_trail_timeframes=())
         if all(c.state_path != pc.state_path for c in cfgs):
             cfgs.append(pc)
+    for tf in cfg.paper_shock_timeframes:                       # shock-follow strategy, trailing stop (paper only)
+        pc = dataclasses.replace(cfg, resolution=tf, dry_run=True, exit_mode="trail", strategy="shock",
+                                 paper_timeframes=(), paper_trail_timeframes=(), paper_shock_timeframes=())
+        if all(c.state_path != pc.state_path for c in cfgs):
+            cfgs.append(pc)
     return cfgs
 
 

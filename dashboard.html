@@ -468,7 +468,7 @@ footer .sig b { color: var(--accent); font-weight: 700; }
 const IST = 19800, TFS = ["30m", "1h", "4h", "1d"];
 let BOOKS = [...TFS];                                       // paper records: timeframes + trailing variants ("4h-trail")
 let HBOOKS = [...TFS];                                      // strategy-history columns (every timeframe + trailing variants)
-const resOf = b => String(b).split("-")[0], blabel = b => String(b).replace("-trail", " trail"), isTrail = b => /-trail$/.test(b);
+const resOf = b => String(b).split("-")[0], blabel = b => String(b).replace("-shock", " shock").replace("-trail", " trail"), isTrail = b => /-trail$/.test(b);
 const S = { sym: null, tf: null, ov: null, live: null, chartLast: 0, lastSig: {}, lastPx: {}, spark: {}, lastOk: 0, tab: "open", first: true };
 let chart, rsiChart, candleS, ema50S, ema200S, rsiS, priceLines = [];
 
@@ -980,7 +980,7 @@ function renderHistory() {
   renderCompare();
   // filters
   const all = hRows(), years = [...new Set(all.map(x => yearOf(x.t0)))].sort();
-  const pairTfs = HBOOKS.filter(isTrail).map(resOf);           // timeframes that have a trailing variant
+  const pairTfs = [...new Set(HBOOKS.filter(b => isTrail(b) && !/-shock/.test(b)).map(resOf))];   // timeframes with a trailing variant of the same signal
   const cmpTf = String(S.hf.view).startsWith("cmp:") ? S.hf.view.slice(4) : null;
   const cmp = cmpTf && pairTfs.includes(cmpTf), trailBk = cmp ? cmpTf + "-trail" : null;
   $("hFilters").innerHTML =

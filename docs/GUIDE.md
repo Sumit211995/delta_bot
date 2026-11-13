@@ -2,11 +2,18 @@
 
 **What it is, how it works, how it was built, and how to deploy it**
 
-Version 1.3 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange India perpetual futures (BTCUSD, ETHUSD, SOLUSD)
+Version 1.4 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange India perpetual futures (BTCUSD, ETHUSD, SOLUSD)
 
 > **Current mode: PAPER TRADING ONLY.** `DRY_RUN=1` is set in `.env`. The bot sends **no real orders**. It simulates
 > every trade with the same entry, stop loss and target it would use with real money, and records the results.
 > Real trading only starts if *you* change `DRY_RUN=0` **and** set `LIVE_CONFIRM=I_UNDERSTAND_THE_RISK`.
+
+### What changed in version 1.4 (13 Nov 2026)
+
+| Change | Why |
+|---|---|
+| **New paper record: 4h shock trail** ("big news" candles) | A 4h candle that moves ≥ 3 × ATR on ≥ 3 × normal volume, in the EMA200 direction, is followed with the trailing stop. Binance 2019–23 PF 3.17 → 2024–26 PF 2.93; Delta's own candles 2024–26 PF 2.58 (section 13.6). Paper only. |
+| Taker flow ("big money": aggressive buyers vs sellers), CVD and shock filters on the pullback signals were tested | None improved both periods clearly; taker volume is also not in Delta's candle API, so it could not run live (section 13.6). |
 
 ### What changed in version 1.3 (13 Nov 2026)
 
@@ -27,7 +34,7 @@ Version 1.3 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange Ind
 4. The strategy in depth: why it buys or sells
 5. Stop loss, target and position size, with a worked example
 6. Safety layer: how the bot protects your money
-7. Paper trading: every record (30m, 1h, 4h, 4h trail, 1d trail)
+7. Paper trading: every record (30m, 1h, 4h, 4h trail, 1d trail, 4h shock trail)
 8. The dashboard
 9. Telegram alerts
 10. How we built it: the development story
@@ -119,7 +126,7 @@ in its own Docker container, and both containers share the folders on the server
 | Storage | Plain **JSON** (state) and **CSV** (trade journal) files, no database | `state/`, `logs/` |
 | Web dashboard | Python's built-in `http.server` + **TradingView Lightweight Charts**, read-only, bound to localhost | `dashboard.py`, `dashboard.html` |
 | Alerts | **Telegram Bot API** | `notifier.py` |
-| Tests | **pytest**, 20 tests | `tests/` |
+| Tests | **pytest**, 22 tests | `tests/` |
 | Packaging and hosting | **Docker + Docker Compose** on **Oracle Cloud Always Free** (Ubuntu, Mumbai/Hyderabad) | `Dockerfile`, `docker-compose.yml` |
 | Source and updates | **Git + GitHub** (`Sumit211995/delta_bot`); the server pulls from GitHub | |
 
@@ -135,7 +142,8 @@ in its own Docker container, and both containers share the folders on the server
 | `dashboard.py` + `dashboard.html` | ~610 + ~1,330 | The live web screen (read-only; it can never place an order). Also downloads and caches the Binance long history. |
 | `backtest.py` | ~175 | Replays history. Contains the fast simulator used by the dashboard's strategy history. |
 | `train_model.py` | ~60 | Optional machine-learning filter (off by default; not needed). |
-| `tests/` | ~300 | 20 automatic tests: core logic, `.env` parsing, the volatility filter. |
+| `tests/` | ~350 | 22 automatic tests: core logic, `.env` parsing, the volatility filter, the shock record. |
+| `research/bigmoney_news.py` | ~190 | Walk-forward test of taker flow (big money) and shock candles (big news). |
 | `research/addon_filters.py` | ~250 | Walk-forward test of popular add-ons (BTC regime, funding rate, ATR filter, Donchian). |
 | `docs/GUIDE.md`, `docs/build_pdf.py` | | This guide and the script that turns it into the PDF. |
 | `Dockerfile`, `docker-compose.yml` | | Packaging for running on a server. |
@@ -290,7 +298,7 @@ than 2% of a $27 wallet. The bot then **skips** the signal instead of over-riski
 
 ---
 
-## 7. Paper trading: every record (30m, 1h, 4h, 4h trail, 1d trail)
+## 7. Paper trading: every record (30m, 1h, 4h, 4h trail, 1d trail, 4h shock trail)
 
 The strategy was designed and tested for **4h**. On 30m and 1h the backtest **lost money** (none of 91 setting
 combinations made money after fees). They are still paper-traded side by side so you can **see this for yourself**
@@ -303,6 +311,7 @@ with live data before trusting any timeframe with real money.
 | **30m** | every 30 minutes | **paper only, always** | `state/paper_state_30m.json`, `logs/paper_trades_30m.csv` |
 | **4h trail** | every 4 hours | **paper only, always**: same signals, trailing stop instead of a fixed target | `state/paper_state_4h-trail.json`, `logs/paper_trades_4h-trail.csv` |
 | **1d trail** | once a day (05:30 IST) | **paper only, always**: daily candles with the trailing stop; skips signals on very volatile days (top 20% ATR%) | `state/paper_state_1d-trail.json`, `logs/paper_trades_1d-trail.csv` |
+| **4h shock trail** | every 4 hours | **paper only, always**: a different signal, a "big news" shock candle in the trend direction, with the trailing stop (section 13.6) | `state/paper_state_4h-shock-trail.json`, `logs/paper_trades_4h-shock-trail.csv` |
 
 - Each timeframe starts with its own **$500** paper balance (`BOT_CAPITAL_USD`) and its own limits.
 - `PAPER_TIMEFRAMES=30m,1h` in `.env` controls the extra timeframes. Even when 4h goes live, these stay paper-only.
@@ -582,6 +591,42 @@ is a paper record only; the live 4h book is unchanged because nothing improved i
 
 ---
 
+### 13.6 Big money and big news, tested Nov 2026 (`research/bigmoney_news.py`)
+
+Same method as 13.5: Binance BTC + ETH + SOL, settings chosen on **2019–2023**, judged on **2024 – Nov 2026**.
+**Big money** = taker flow: Binance futures candles say how much volume came from aggressive *buyers* (taker buy
+volume), so the taker-buy ratio and CVD (cumulative volume delta = buyers − sellers) show who is pushing.
+**Big news** = a *shock candle*: the candle's body is ≥ k × ATR (of the candle before) on ≥ 3 × its 20-candle
+average volume. Open interest and long/short ratios have only ~30 days of free history, so they were not tested;
+the funding rate was already rejected in 13.5.
+
+| Idea | Book | Setting | 2019–23: trades · win · PF · R · max DD | 2024–26: trades · win · PF · R · max DD | Kept? |
+|---|---|---|---|---|---|
+| Baseline pullback | 4h | — | 357 · 32% · 1.34 · +85.5 · 19.4 | 279 · 28% · 1.09 · +19.8 · 29.9 | — |
+| Baseline pullback | 4h trail | — | 421 · 44% · 1.48 · +109.9 · 12.1 | 312 · 39% · 1.47 · +84.6 · 23.9 | — |
+| Baseline pullback | 1d trail | (with the 13.5 vol filter) | 45 · 53% · 4.28 · +64.5 · 6.1 | 55 · 42% · 1.69 · +21.7 · 8.1 | — |
+| Taker ratio agrees (n = 3 / 6 / 12 candles) | all | vs its 500-candle median | cuts trades to 20–50% | mixed: better in one period, worse in the other | No |
+| Skip against extreme taker flow | 4h trail | top / bottom 20% | 273 · 44% · 1.41 · +60.0 · 12.7 | 207 · 44% · 1.83 · +91.9 · 18.4 | No (worse 2019–23) |
+| CVD agrees (6 / 12 / 24 candles) | all | sum of delta | cuts trades to 15–35% | mixed | No |
+| Skip 3–6 candles after a shock | 4h trail | k = 2.5 | 411–413 · 1.50 · +110.5–111.7 | 297–303 · 1.49–1.50 · +85–86 | No (+0.02 PF: noise) |
+| Only trade in a recent shock's direction | 4h trail / 1d trail | k = 2.5 | 1.55 / 4.52 | 1.53 / 1.80 | No (tiny gain, few trades removed) |
+| **Follow the shock (stand-alone)** | **4h trail** | **k = 3, EMA200 trend** | **71 · 51% · 3.17 · +68.7 · 6.4** | **53 · 45% · 2.93 · +51.7 · 12.0** | **Yes: new paper record** |
+| Follow the shock | 4h, 1:3 target | k = 3, EMA200 | 78 · 41% · 1.98 · +46.8 · 6.3 | 54 · 44% · 2.25 · +39.4 · 10.7 | (works, trail better) |
+| Fade the shock (reversal) | all | k = 2.5 / 3 / 4 | lost | lost | No |
+
+**Checked on Delta's own candles** (Apr 2024 – Nov 2026, Delta volume): the chosen rule made 26 trades, 46% wins,
+**PF 2.58, +20.8R**, worst drawdown 6.4R, so it is not a Binance-only effect.
+
+**The new record "4h shock trail"** (`PAPER_SHOCK_TIMEFRAMES=4h`, `SHOCK_K=3`, `SHOCK_VOL=3`):
+- **Signal** after a closed 4h candle whose body is ≥ 3 × ATR on ≥ 3 × its 20-candle average volume; buy if it closed
+  up **and** above the EMA200, sell if it closed down **and** below the EMA200.
+- **Exit** like 4h trail: stop 1.5 × ATR, no target; after +1R the stop trails 2 × ATR behind the best close.
+- **Paper only** (the config refuses trailing exits in live mode). It needs only Delta's own candles (OHLC + volume).
+- **Expect** about one signal a month per coin, and long quiet spells; most profit comes from a few big trends.
+
+**Why not taker flow?** Besides the mixed results, Delta's candle API returns only open, high, low, close and volume,
+not the taker-buy volume, so a taker filter could not be computed by the live bot from Delta data.
+
 ## 14. Daily use: commands
 
 Run these in the project folder (`cd ~/Documents/Project/delta_bot`):
@@ -596,7 +641,7 @@ Run these in the project folder (`cd ~/Documents/Project/delta_bot`):
 | `python bot.py --paper-tf none` | Run only the main timeframe (no extra paper timeframes) |
 | `python bot.py --symbols ETHUSD` | Override the coins for this run |
 | `python backtest.py --symbol ETHUSD --resolution 4h` | Re-run the backtest with a per-year breakdown |
-| `python -m pytest -q tests` | Run the automatic tests (should say "20 passed") |
+| `python -m pytest -q tests` | Run the automatic tests (should say "22 passed") |
 | `python bot.py --panic` | **Emergency:** cancel all orders and close positions on the bot's coins (manual trades too) |
 
 ---
@@ -630,6 +675,7 @@ Run these in the project folder (`cd ~/Documents/Project/delta_bot`):
 | `FEE_RATE` | `0.0006` | Per side, used for paper P&L and backtests |
 | `TELEGRAM_TOKEN` / `TELEGRAM_CHAT_ID` | set | Phone alerts |
 | `VOL_FILTER_BOOKS` / `VOL_FILTER_N` / `VOL_FILTER_MAX` | `1d-trail` / `500` / `0.8` | Skip signals when volatility is in its top 20% (see 13.5); `none` = off |
+| `PAPER_SHOCK_TIMEFRAMES` / `SHOCK_K` / `SHOCK_VOL` | `4h` / `3.0` / `3.0` | Paper-only shock-follow record (see 13.6); `none` = off |
 
 ---
 

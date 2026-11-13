@@ -42,6 +42,9 @@ def add_indicators(df: pd.DataFrame, cfg) -> pd.DataFrame:
     if vol_filter_on(cfg):
         n = cfg.vol_filter_n
         d["atr_rank"] = (d["atr"] / c).rolling(n, min_periods=n // 2).rank(pct=True)
+    if "volume" in d:                                           # shock candles ("big news"): see _shock
+        d["atr_prev"] = d["atr"].shift(1)
+        d["vol_avg20"] = d["volume"].rolling(20).mean().shift(1)
     return d
 
 
@@ -104,7 +107,26 @@ def _pullback(d, i, row, prev, cfg):
     return None, ""
 
 
-STRATEGIES = {"pullback": _pullback, "ema_cross": _ema_cross}
+def _shock(d, i, row, prev, cfg):
+    """Shock-follow ("big news" candle): the closed candle's body is >= SHOCK_K x ATR of the candle before, on volume
+    >= SHOCK_VOL x its 20-candle average, in the direction of the EMA200 trend. Paper only, trailing stop.
+    Research (research/bigmoney_news.py, 4h trail, k=3): Binance 2019-23 PF 3.17 (71 trades), 2024-26 PF 2.93 (53);
+    Delta's own candles Apr 2024 - Nov 2026 PF 2.58 (26 trades)."""
+    atr_p, vavg = row.get("atr_prev", np.nan), row.get("vol_avg20", np.nan)
+    if np.isnan(atr_p) or np.isnan(vavg) or vavg <= 0:
+        return None, ""
+    body = row["close"] - row["open"]
+    if abs(body) < cfg.shock_k * atr_p or row["volume"] < cfg.shock_vol * vavg:
+        return None, ""
+    x = f"shock candle {body / atr_p:+.1f} ATR on {row['volume'] / vavg:.1f}x volume"
+    if body > 0 and row["close"] > row["ema_trend"]:
+        return "buy", x + ", above EMA200"
+    if body < 0 and row["close"] < row["ema_trend"]:
+        return "sell", x + ", below EMA200"
+    return None, ""
+
+
+STRATEGIES = {"pullback": _pullback, "ema_cross": _ema_cross, "shock": _shock}
 
 
 def signal_at(d: pd.DataFrame, i: int, cfg):
@@ -156,6 +178,12 @@ def signals_vectorized(d: pd.DataFrame, cfg) -> np.ndarray:
         lo, hi = cfg.rsi_pullback, 100 - cfg.rsi_pullback
         buy = (slow > trend) & (c > trend) & (prsi < lo) & (rsi >= lo)
         sell = (slow < trend) & (c < trend) & (prsi > hi) & (rsi <= hi)
+    elif cfg.strategy == "shock":
+        body = c - d["open"]
+        big = (body.abs() >= cfg.shock_k * d["atr_prev"]) & (d["volume"] >= cfg.shock_vol * d["vol_avg20"]) \
+            & (d["vol_avg20"] > 0)
+        buy = big & (body > 0) & (c > trend)
+        sell = big & (body < 0) & (c < trend)
     else:
         up = (fast.shift(1) <= slow.shift(1)) & (fast > slow)
         dn = (fast.shift(1) >= slow.shift(1)) & (fast < slow)

@@ -151,7 +151,7 @@ def test_paper_books_are_separate_and_never_live():
     import dataclasses
     from bot import books_for
     from config import Config
-    live = Config(dry_run=False, resolution="4h", paper_timeframes=("30m", "1h", "4h"))
+    live = Config(dry_run=False, resolution="4h", paper_timeframes=("30m", "1h", "4h"), paper_shock_timeframes=())
     books = books_for(live)
     assert [(c.resolution, c.dry_run) for c in books] == [("4h", False), ("30m", True), ("1h", True), ("4h", True)]
     assert len({c.state_path for c in books}) == 4                 # live state never shared with a paper book
@@ -196,7 +196,7 @@ def test_trailing_book_is_paper_only():
     from bot import books_for
     from config import validate
     cfg = Config(dry_run=False, env="testnet", api_key="k", api_secret="s", resolution="4h",
-                 paper_timeframes=("1h",), paper_trail_timeframes=("4h",))
+                 paper_timeframes=("1h",), paper_trail_timeframes=("4h",), paper_shock_timeframes=())
     books = books_for(cfg)
     assert [c.book for c in books] == ["4h", "1h", "4h-trail"]
     assert [c.dry_run for c in books] == [False, True, True]
