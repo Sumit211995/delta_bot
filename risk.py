@@ -2,7 +2,7 @@
 import json
 import math
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -42,7 +42,7 @@ class RiskManager:
         self.save()
 
     def _roll(self, equity: float, now=None):
-        today = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+        today = (now or datetime.now(timezone(timedelta(hours=5, minutes=30)))).strftime("%Y-%m-%d")   # day resets at 00:00 IST
         if self.state.day != today:
             self.state.day, self.state.start_equity, self.state.trades_today = today, equity, 0
         self.state.peak_equity = max(self.state.peak_equity, equity)

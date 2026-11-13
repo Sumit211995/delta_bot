@@ -18,7 +18,9 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+IST = timezone(timedelta(hours=5, minutes=30))          # every time a person reads is shown in IST
 
 import pandas as pd
 
@@ -35,12 +37,19 @@ LOG_COLUMNS = ["time", "symbol", "event", "side", "size", "entry", "sl", "tp", "
 
 def setup_logging(cfg):
     os.makedirs(cfg.log_dir, exist_ok=True)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    logging.Formatter.converter = staticmethod(lambda secs=None: time.gmtime((secs or time.time()) + 19800))  # IST logs
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s IST %(levelname)s %(name)s: %(message)s",
                         handlers=[logging.FileHandler(f"{cfg.log_dir}/bot.log"), logging.StreamHandler()])
 
 
 def fmt_t(t: int) -> str:
+    """Journal (CSV) time: stays UTC so existing records and the dashboard parser keep working."""
     return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def fmt_ist(t: int) -> str:
+    """Time shown to people (Telegram, logs, command line): Indian Standard Time."""
+    return datetime.fromtimestamp(t, IST).strftime("%d %b %Y %H:%M IST")
 
 
 def fetch_closed_candles(client, cfg, symbol, bars=None) -> pd.DataFrame:
@@ -132,7 +141,7 @@ def settle_paper(cfg, risk, m, df):          # df = closed candles WITH indicato
                         entry=pos["entry"], sl=pos["sl"], tp=pos["tp"], exit=exit_p, pnl=round(pl, 4),
                         equity=round(risk.state.paper_equity, 2), live=False))
     notifier.send(cfg, f"PAPER {cfg.book} {m['symbol']} {pos['side'].upper()} closed at {why.upper()} {exit_p} "
-                       f"P&L {pl:+.2f} | paper equity {risk.state.paper_equity:.2f}")
+                       f"P&L {pl:+.2f} | paper equity {risk.state.paper_equity:.2f} | {fmt_ist(t + cfg.period_seconds)}")
 
 
 def step(client, cfg, risk, m, live_sizes):
@@ -156,13 +165,13 @@ def step(client, cfg, risk, m, live_sizes):
         settle_paper(cfg, risk, m, d)
 
     sig = signal_at(d, len(d) - 1, cfg)
-    ts = fmt_t(last_t)
+    ts, ts_ist = fmt_t(last_t), fmt_ist(last_t + cfg.period_seconds)   # candle START (journal) / CLOSE time (IST)
     if sig is None:
-        logging.info("%s candle %s closed: no signal (close=%s rsi=%.1f)", sym, ts,
+        logging.info("%s candle closed %s: no signal (close=%s rsi=%.1f)", sym, ts_ist,
                      df["close"].iloc[-1], d["rsi"].iloc[-1])
         return
     if not ml_pass(sig, cfg):
-        logging.info("%s candle %s: %s signal rejected by ML filter", sym, ts, sig.side)
+        logging.info("%s candle closed %s: %s signal rejected by ML filter", sym, ts_ist, sig.side)
         return
 
     if live and live_sizes.get(sym):
@@ -199,7 +208,7 @@ def step(client, cfg, risk, m, live_sizes):
     risk_amt = abs(entry - sl) * size * m["cval"]
     msg = (f"{tag(cfg)} {sig.side.upper()} {size} {sym} @~{entry:.2f} "
            f"SL {sl} " + (f"TP trailing (after +{cfg.trail_activate_r:g}R, {cfg.trail_atr:g}xATR)" if trail else f"TP {tp}")
-           + f" (risk ~{risk_amt:.2f}) | {sig.reason}")
+           + f" (risk ~{risk_amt:.2f}) | {sig.reason} | candle closed {ts_ist}")
     notifier.send(cfg, msg)
     row = dict(time=ts, symbol=sym, event="entry", side=sig.side, size=size, entry=entry, sl=sl, tp="" if trail else tp,
                equity=round(equity, 2), live=live, reason=sig.reason)
@@ -239,7 +248,7 @@ def check(client, cfg, markets):
         df = fetch_closed_candles(client, cfg, m["symbol"])
         d = add_indicators(df, cfg)
         r = d.iloc[-1]
-        print(f"candles={len(df)} last closed={fmt_t(int(r['time']))} close={r['close']} "
+        print(f"candles={len(df)} last closed={fmt_ist(int(r['time']) + cfg.period_seconds)} close={r['close']} "
               f"atr={r['atr']:.2f} rsi={r['rsi']:.1f} trend={'UP' if r['ema_slow'] > r['ema_trend'] else 'DOWN'}")
         sig = signal_at(d, len(d) - 1, cfg)
         print("signal on last closed candle:", f"{sig.side} ({sig.reason})" if sig else "none")
@@ -279,7 +288,7 @@ def status(cfg):
                       f"(opened {p['opened']})")
         else:
             print("Open paper trades: none")
-    print("Last candle checked: " + (", ".join(f"{k} {fmt_t(v)}" for k, v in s.last_processed_by.items())
+    print("Last candle checked: " + (", ".join(f"{k} {fmt_ist(v)}" for k, v in s.last_processed_by.items())
                                      or "none yet (start the bot)"))
     print(f"Trades today: {s.trades_today}/{cfg.max_trades_per_day}")
     if os.path.exists(cfg.trades_path):

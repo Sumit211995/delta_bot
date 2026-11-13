@@ -13,6 +13,7 @@ Version 1.4 · November 2026 · built by $um!t_K@Ktw@n · for Delta Exchange Ind
 | Change | Why |
 |---|---|
 | **New paper record: 4h shock trail** ("big news" candles) | A 4h candle that moves ≥ 3 × ATR on ≥ 3 × normal volume, in the EMA200 direction, is followed with the trailing stop. Binance 2019–23 PF 3.17 → 2024–26 PF 2.93; Delta's own candles 2024–26 PF 2.58 (section 13.6). Paper only. |
+| **All times in IST** | Telegram trade messages now carry the candle-close time in IST, logs and command-line output print IST, the dashboard journal shows IST, and the daily loss limit resets at 00:00 IST. Journal files still store UTC internally. |
 | **New paper record: 1h shock trail** | The same shock rule on 1-hour candles (same settings, no new tuning): Binance 2019–23 PF 1.42 → 2024–26 PF 1.70; Delta's own 1h candles 2024–26: 202 trades, PF 2.02, +113R. Fading shocks lost on every timeframe (section 13.6). Paper only. |
 | Taker flow ("big money": aggressive buyers vs sellers), CVD and shock filters on the pullback signals were tested | None improved both periods clearly; taker volume is also not in Delta's candle API, so it could not run live (section 13.6). |
 

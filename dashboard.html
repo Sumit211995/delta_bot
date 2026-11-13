@@ -482,6 +482,8 @@ const px = x => fmt(x, dp(Math.abs(x || 0)));
 const money = x => (x > 0 ? "+" : x < 0 ? "−" : "") + "$" + fmt(Math.abs(x || 0), 2);
 const ist = t => new Date((t + IST) * 1000).toISOString().slice(5, 16).replace("T", " ");
 const istY = t => new Date((t + IST) * 1000).toISOString().slice(0, 16).replace("T", " ");
+// journal rows store "YYYY-MM-DD HH:MM UTC" (candle start): show them in IST
+const utcToIst = s => { const m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/.exec(String(s || "")); return m ? istY(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5]) / 1000) : (s || ""); };
 const left = t => { const s = Math.max(0, t - Date.now() / 1000); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = Math.floor(s % 60);
   return h ? `${h}h ${m}m` : m ? `${m}m ${String(ss).padStart(2, "0")}s` : `${ss}s`; };
 const compact = x => x >= 1e9 ? (x / 1e9).toFixed(2) + "B" : x >= 1e6 ? (x / 1e6).toFixed(1) + "M" : fmt(x, 0);
@@ -779,8 +781,8 @@ function renderTable() {
         <span class="pnlbar"><i style="left:50%;width:${Math.abs(prog * (p.side === "buy" ? 1 : -1)) * 50}%;${(pnl || 0) < 0 ? "transform:translateX(-100%);" : ""}background:${(pnl || 0) >= 0 ? "var(--up)" : "var(--down)"}"></i></span></td></tr>`; }).join("") + "</tbody>"
       : `<tbody><tr><td class="empty"><div class="big">◎</div>No open trades. The bot is waiting for a signal on ${d.resolution}.</td></tr></tbody>`;
   } else if (S.tab === "hist") {
-    h = hist.length ? `<thead><tr><th>Time (UTC)</th><th>Source</th><th>Coin</th><th>Event</th><th>Side</th><th>Size</th><th>Entry</th><th>SL</th><th>TP</th><th>Exit</th><th>P&L</th></tr></thead><tbody>` +
-      hist.map(t => `<tr><td class="mono">${esc(t.time)}</td><td>${esc(t.source)}</td><td><b>${esc(t.symbol)}</b></td>
+    h = hist.length ? `<thead><tr><th>Time (IST)</th><th>Source</th><th>Coin</th><th>Event</th><th>Side</th><th>Size</th><th>Entry</th><th>SL</th><th>TP</th><th>Exit</th><th>P&L</th></tr></thead><tbody>` +
+      hist.map(t => `<tr><td class="mono">${esc(utcToIst(t.time))}</td><td>${esc(t.source)}</td><td><b>${esc(t.symbol)}</b></td>
         <td><span class="tag ${t.event === "target" ? "buy" : t.event === "stop" ? "sell" : "wait"}">${esc(String(t.event || "").toUpperCase())}</span></td>
         <td>${esc(String(t.side || "").toUpperCase())}</td><td class="mono">${fmt(t.size, 0)}</td><td class="mono">${px(t.entry)}</td><td class="mono">${px(t.sl)}</td>
         <td class="mono">${px(t.tp)}</td><td class="mono">${t.exit ? px(t.exit) : "–"}</td>
